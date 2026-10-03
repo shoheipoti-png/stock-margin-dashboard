@@ -41,42 +41,63 @@ def main():
     
     print("PDFの解析を開始します...")
     with pdfplumber.open(pdf_file) as pdf:
+        current_code = None
+        tot_sell = None
+        tot_buy = None
+        
         for page in pdf.pages:
             text = page.extract_text(layout=True)
             if not text: continue
             
             for line in text.split('\n'):
-                # 「株数 Shs.」の行だけをピンポイントで抽出
-                if '株数 Shs.' in line:
-                    # 銘柄コードの抽出
-                    code_match = re.search(r'(?:^|\s)([A-Z0-9]{4})0\s', line)
-                    if not code_match: continue
-                    code = code_match.group(1)
+                line = line.replace('▲ ', '-').replace('▲', '-').replace(',', '')
+                
+                # 1. 銘柄コードと「株数」の行を特定
+                match = re.search(r'(?:^|\s)(\d{4})0\s+JP', line)
+                if match:
+                    current_code = match.group(1)
+                    if 'Shs.' in line:
+                        parts = line.split('Shs.')[-1].split()
+                        nums = [p for p in parts if re.match(r'^[\-\+]?\d+$', p)]
+                        if len(nums) >= 2:
+                            tot_sell = nums[0]  # 左端が売残合計
+                            tot_buy = nums[-2]  # 右から2番目が買残合計（一番右は前日比）
+                    continue
+                
+                # 2. 金額の行は完全に無視
+                if 'Val.' in line:
+                    continue
+                
+                # 3. 内訳（一般・制度）の行の抽出
+                if current_code and tot_sell and tot_buy:
+                    parts = line.split()
+                    nums = [p for p in parts if re.match(r'^[\-\+]?\d+$', p)]
                     
-                    # 「株数 Shs.」以降の数値データ部分を切り出し
-                    data_part = line.split('株数 Shs.')[1]
-                    # ▲表記をマイナスに変換
-                    data_part = data_part.replace('▲ ', '-').replace('▲', '-').replace(',', '')
-                    tokens = data_part.split()
-                    
-                    # 正常にデータが並んでいれば13個の数値ブロックになる
-                    if len(tokens) >= 12:
-                        tot_sell = tokens[0]  # 売残高
-                        gen_sell = tokens[3]  # 一般信用売
-                        std_sell = tokens[5]  # 制度信用売
-                        tot_buy  = tokens[7]  # 買残高
-                        gen_buy  = tokens[9]  # 一般信用買
-                        std_buy  = tokens[11] # 制度信用買
+                    # 内訳行には0や数値が多数並ぶ
+                    if len(nums) >= 6:
+                        gen_sell = nums[0]
+                        std_sell = nums[2] if len(nums) > 2 else "0"
+                        gen_buy = nums[4] if len(nums) > 4 else "0"
+                        std_buy = nums[6] if len(nums) > 6 else "0"
                         
-                        new_rows.append([today_str, code, "-", tot_sell, gen_sell, std_sell, tot_buy, gen_buy, std_buy])
+                        new_rows.append([today_str, current_code, "-", tot_sell, gen_sell, std_sell, tot_buy, gen_buy, std_buy])
+                        
+                        # 次の銘柄に向けてリセット
+                        current_code = None
+                        tot_sell = None
+                        tot_buy = None
 
     print(f"{len(new_rows)} 銘柄分のデータを抽出しました。")
     
     existing_data = worksheet.get_all_values()
-    headers = ["日付", "銘柄コード", "機関空売り増減", "売残(合計)", "売残(一般)", "売残(制度)", "買残(合計)", "買残(一般)", "買残(制度)"]
-    data_rows = existing_data[1:] if existing_data and existing_data[0][0] == "日付" else []
+    if not existing_data or existing_data[0][0] != "日付":
+        headers = ["日付", "銘柄コード", "機関空売り増減", "売残(合計)", "売残(一般)", "売残(制度)", "買残(合計)", "買残(一般)", "買残(制度)"]
+        data_rows = []
+    else:
+        headers = existing_data[0]
+        data_rows = existing_data[1:]
     
-    # 1年（365日）を過ぎたデータを自動削除
+    # データ保持期間を1年（250営業日/365日）に設定し、容量オーバーを防止
     cutoff_date = datetime.datetime.now() - datetime.timedelta(days=365)
     cutoff_date_str = cutoff_date.strftime("%Y-%m-%d")
     
@@ -85,7 +106,7 @@ def main():
     
     worksheet.clear()
     worksheet.update('A1', [headers] + filtered_rows)
-    print("スプレッドシートの更新が完了しました。")
+    print("スプレッドシートへの書き込みとローリング整理が完了しました。")
 
 if __name__ == "__main__":
     main()
