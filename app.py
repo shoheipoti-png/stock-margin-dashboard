@@ -30,15 +30,15 @@ if ticker:
     }
     selected_days = days_map[period_option]
     
-    # --- 日付リストの生成（選択された期間に応じて行数を変更） ---
+    # --- 日付リストの生成 ---
     date_list = [datetime.date.today() - datetime.timedelta(days=i) for i in range(selected_days)]
     date_list = [d for d in date_list if d.weekday() < 5] # 土日を除外
     
-    # --- 2枚目のデザインを再現するHTMLテーブルの構築 ---
-    html_rows = ""
+    # --- HTMLテーブルの構築 ---
+    rows_html = []
     for d in date_list:
         date_str = d.strftime("%m/%d<br>%a")
-        html_rows += f"""
+        row = f"""
         <tr>
             <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #fff;">{date_str}</td>
             <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #fff;">
@@ -67,7 +67,10 @@ if ticker:
             </td>
         </tr>
         """
+        rows_html.append(row)
         
+    joined_rows = "".join(rows_html)
+    
     html_table = f"""
     <table style="width:100%; border-collapse: collapse; font-family: sans-serif; font-size: 14px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
         <thead>
@@ -87,10 +90,10 @@ if ticker:
             </tr>
         </thead>
         <tbody>
-            {html_rows}
+            {joined_rows}
         </tbody>
     </table>
     """
     
-    # HTMLの描画
+    # HTMLとしてレンダリングして描画
     st.markdown(html_table, unsafe_allow_html=True)
