@@ -21,11 +21,11 @@ if ticker:
         index=0
     )
     
-    # 期間に応じた日数の定義
+    # 期間に応じた日数の定義（UIの選択肢に合わせてキーを統一）
     days_map = {
         "直近1ヶ月": 30,
         "直近3ヶ月": 90,
-        "直近半年": 180,
+        "直半年": 180,
         "1年": 365,
         "1年半（最大）": 540
     }
@@ -40,12 +40,10 @@ if ticker:
     for d in date_list:
         date_str = d.strftime("%m/%d<br>%a")
         
-        # プラス・マイナスに応じた背景色・文字色の切り分け設定（2枚目の画像を再現）
-        # 前日比（プラス例）
+        # プラス・マイナスに応じた背景色・文字色の切り分け設定
         diff_bg = "#ffebee"
         diff_color = "#d32f2f"
         
-        # JPMや全増減（マイナス例）
         minus_bg = "#e3f2fd"
         minus_color = "#1976d2"
         
@@ -106,5 +104,5 @@ if ticker:
     </table>
     """
     
-    # 表示エリアの高さを750pxに拡張
+    # 750pxの高さでテーブルを表示
     components.html(html_table, height=750, scrolling=True)
