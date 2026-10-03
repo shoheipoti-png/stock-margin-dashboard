@@ -6,3 +6,8 @@ requests
 beautifulsoup4
 gspread
 google-auth
+gspread
+google-auth
+pdfplumber
+requests
+beautifulsoup4
