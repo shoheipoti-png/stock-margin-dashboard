@@ -17,7 +17,7 @@ if ticker:
     # --- 表示期間の選択UI ---
     period_option = st.selectbox(
         "表示期間を選択：",
-        ["直近1ヶ月", "直近3ヶ月", "直近半年", "1年", "1年半（最大）"],
+        ["直近1ヶ月", "直近3ヶ月", "直半年", "1年", "1年半（最大）"],
         index=0
     )
     
@@ -35,36 +35,46 @@ if ticker:
     date_list = [datetime.date.today() - datetime.timedelta(days=i) for i in range(selected_days)]
     date_list = [d for d in date_list if d.weekday() < 5] # 土日を除外
     
-    # --- HTMLテーブルの構築 ---
+    # --- HTMLテーブルの構築（背景色・高さ改善版） ---
     rows_html = []
     for d in date_list:
         date_str = d.strftime("%m/%d<br>%a")
+        
+        # プラス・マイナスに応じた背景色・文字色の切り分け設定（2枚目の画像を再現）
+        # 前日比（プラス例）
+        diff_bg = "#ffebee"
+        diff_color = "#d32f2f"
+        
+        # JPMや全増減（マイナス例）
+        minus_bg = "#e3f2fd"
+        minus_color = "#1976d2"
+        
         row = f"""
         <tr>
             <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #fff;">{date_str}</td>
-            <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #fff;">
-                <div style="color: #d32f2f; font-weight: bold;">+2.5%</div>
+            <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: {diff_bg};">
+                <div style="color: {diff_color}; font-weight: bold;">+2.5%</div>
                 <div style="color: #666; font-size: 0.85em;">1.4M株</div>
             </td>
-            <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #fff;">
-                <div style="color: #d32f2f; font-weight: bold;">+50.0K</div>
+            <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: {diff_bg};">
+                <div style="color: {diff_color}; font-weight: bold;">+50.0K</div>
             </td>
-            <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #fff;">
-                <div style="color: #1976d2; font-weight: bold;">-120.0K</div>
+            <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: {minus_bg};">
+                <div style="color: {minus_color}; font-weight: bold;">-120.0K</div>
             </td>
             <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #fff;">
                 <div style="color: #666;">-</div>
             </td>
-            <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #fff;">
-                <div style="color: #1976d2; font-weight: bold;">-70.0K</div>
+            <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: {minus_bg};">
+                <div style="color: {minus_color}; font-weight: bold;">-70.0K</div>
             </td>
             <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #fff;">
                 <div style="font-weight: bold;">1.5M</div>
-                <div style="color: #d32f2f; font-size: 0.85em;">+20.0K</div>
+                <div style="color: {diff_color}; background-color: {diff_bg}; font-size: 0.85em; padding: 2px;">+20.0K</div>
             </td>
             <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #fff;">
                 <div style="font-weight: bold;">3.2M</div>
-                <div style="color: #1976d2; font-size: 0.85em;">-50.0K</div>
+                <div style="color: {minus_color}; background-color: {minus_bg}; font-size: 0.85em; padding: 2px;">-50.0K</div>
             </td>
         </tr>
         """
@@ -96,5 +106,5 @@ if ticker:
     </table>
     """
     
-    # コンポーネントとしてHTMLを描画（スクロール付きで綺麗に収まります）
-    components.html(html_table, height=500, scrolling=True)
+    # 表示エリアの高さを750pxに拡張
+    components.html(html_table, height=750, scrolling=True)
