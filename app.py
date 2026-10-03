@@ -51,15 +51,22 @@ if ticker:
     
     df = load_data_from_sheet()
     
-    # 取得失敗時・空時のダミー
+# 取得失敗時・空時のダミー
     if df.empty or "銘柄コード" not in df.columns:
-        date_list = [datetime.date.today() - datetime.timedelta(days=i) for i in range(selected_days) if (datetime.date.today() - datetime.timedelta(days=i)).weekday() < 5]
+        date_list = [datetime.date.today() - datetime.timedelta(days=i) for i in range(selected_days)]
+        date_list = [d for d in date_list if d.weekday() < 5]
+        
+        # すべての要素の配列長さを合わせることでエラーを解消
         df = pd.DataFrame({
             "日付": [d.strftime("%Y-%m-%d") for d in date_list],
             "銘柄コード": [ticker] * len(date_list),
-            "機関空売り増減": ["-"],
-            "売残(合計)": ["8800"], "売残(一般)": ["0"], "売残(制度)": ["8800"],
-            "買残(合計)": ["157700"], "買残(一般)": ["37500"], "買残(制度)": ["120200"],
+            "機関空売り増減": ["-"] * len(date_list),
+            "売残(合計)": ["8800"] * len(date_list),
+            "売残(一般)": ["0"] * len(date_list),
+            "売残(制度)": ["8800"] * len(date_list),
+            "買残(合計)": ["157700"] * len(date_list),
+            "買残(一般)": ["37500"] * len(date_list),
+            "買残(制度)": ["120200"] * len(date_list),
         })
         
     df_filtered = df[df["銘柄コード"].astype(str) == str(ticker)]
