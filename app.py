@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import datetime
+import streamlit.components.v1 as components
 
 # ページの設定
 st.set_page_config(page_title="株価・信用残・機関空売りダッシュボード", layout="wide")
@@ -95,5 +96,5 @@ if ticker:
     </table>
     """
     
-    # HTMLとしてレンダリングして描画
-    st.markdown(html_table, unsafe_allow_html=True)
+    # コンポーネントとしてHTMLを描画（スクロール付きで綺麗に収まります）
+    components.html(html_table, height=500, scrolling=True)
