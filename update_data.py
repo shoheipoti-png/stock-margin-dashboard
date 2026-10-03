@@ -57,44 +57,40 @@ def main():
     print("PDFの解析を開始します...")
     with pdfplumber.open(pdf_file) as pdf:
         for page in pdf.pages:
-            # layout=True を指定し、PDFの見た目通りに空白（スペース）を維持してズレを防ぐ
             text = page.extract_text(layout=True)
             if not text:
                 continue
             
             for line in text.split('\n'):
-                # 先頭が5桁の数字（銘柄コード＋末尾0）で始まる行を対象
-                match = re.match(r'^\s*(\d{5})\s', line)
+                # 行の途中からでも「4桁数字+0 + 空白 + JP」の並びを確実に捉える
+                match = re.search(r'(?:^|\s)(\d{4})0\s+JP', line)
                 if match:
-                    code = match.group(1)[:4] # 先頭4桁を銘柄コードとして取得
+                    code = match.group(1) # 4桁の銘柄コードを取得
                     
-                    # スペース2個以上を区切り文字として、列のブロックを正確に分割
-                    blocks = re.split(r'\s{2,}', line.strip())
+                    # 証券コード以降の文字列から数値を抽出
+                    after_code = line[match.end():]
+                    blocks = after_code.split()
                     
-                    # カンマ付きの数値をリスト化（▲表記はマイナスに変換）
                     nums = []
                     for b in blocks:
-                        clean_b = b.replace(',', '').replace('▲', '-')
+                        # カンマ削除、▲やA表記をマイナスに変換
+                        clean_b = b.replace(',', '').replace('▲', '-').replace('A', '-')
+                        # 整数にマッチするものだけ抽出
                         if re.match(r'^[\-\+]?\d+$', clean_b):
                             nums.append(clean_b)
                     
-                    # JPXのフォーマットに合わせ、右側に配置される信用残データを取得
                     if len(nums) >= 2:
-                        try:
-                            # ※前日比（プラスマイナス）の有無で要素数が変わるため、後方から安全に取得
-                            buy_bal = nums[-1] if len(nums) <= 2 else nums[-2]
-                            sell_bal = nums[-2] if len(nums) <= 2 else nums[-4]
-                            
-                            new_rows.append([today_str, code, "-", sell_bal, buy_bal])
-                        except Exception:
-                            continue
+                        # JPXの構造上、最初に出てくる数値が売残合計
+                        sell_bal = nums[0]
+                        # 買残合計はデータ後半に出現するため、大まかに要素の中央以降から取得
+                        buy_bal = nums[len(nums) // 2] if len(nums) >= 4 else nums[-1]
+                        
+                        new_rows.append([today_str, code, "-", sell_bal, buy_bal])
 
     print(f"{len(new_rows)} 銘柄分のデータを抽出しました。")
     
-    # 5. スプレッドシートのローリング更新と見出しの自動修復
+    # スプレッドシートのローリング更新と見出し維持
     existing_data = worksheet.get_all_values()
-    
-    # 1行目が見出し（"日付"）でない場合、手動テストデータで上書きされていると判断し強制リセット
     if not existing_data or existing_data[0][0] != "日付":
         headers = ["日付", "銘柄コード", "機関空売り増減", "個人信用売残", "個人信用買残"]
         data_rows = []
@@ -102,16 +98,12 @@ def main():
         headers = existing_data[0]
         data_rows = existing_data[1:]
     
-    # 370日以上前の古いデータをフィルタリングして除外（ローリング処理）
     cutoff_date = datetime.datetime.now() - datetime.timedelta(days=370)
     cutoff_date_str = cutoff_date.strftime("%Y-%m-%d")
     
     filtered_rows = [row for row in data_rows if len(row) > 0 and row[0] >= cutoff_date_str]
-    
-    # 新しいデータ（今日の分）を追加
     filtered_rows.extend(new_rows)
     
-    # スプレッドシートを一度クリアし、最新状態で一括書き込み
     worksheet.clear()
     worksheet.update('A1', [headers] + filtered_rows)
     
