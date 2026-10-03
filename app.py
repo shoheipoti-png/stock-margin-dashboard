@@ -1,118 +1,55 @@
 import streamlit as st
 import pandas as pd
-import yfinance as yf
-import requests
-from bs4 import BeautifulSoup
+import datetime
 
-st.set_page_config(page_title="信用残・空売り確認ツール", layout="wide")
+# ページの設定
+st.set_page_config(page_title="株価・信用残・機関空売りダッシュボード", layout="wide")
 
-st.title("株価・信用残・機関空売り ダッシュボード")
+st.title("株価・信用残・機関空売りダッシュボード")
 
 # 銘柄コード入力
 ticker = st.text_input("銘柄コード（4桁）を入力してください", value="6323")
 
-# 銘柄名を取得する関数（Yahooファイナンスから日本語名を取得）
-@st.cache_data(ttl=3600) # 1時間記憶させて動作を軽くする設定
-def get_stock_name(t_code):
-    try:
-        url = f"https://finance.yahoo.co.jp/quote/{t_code}.T"
-        res = requests.get(url, timeout=5)
-        soup = BeautifulSoup(res.text, 'html.parser')
-        title = soup.find('title').text
-        # 例: "ローツェ(株)【6323】：株価・株式情報 - Yahoo!ファイナンス" から名前だけ抽出
-        name = title.split('【')[0]
-        return name
-    except:
-        return ""
-
-# ユーティリティ関数：K/Mフォーマット
-def format_km(value):
-    if pd.isna(value) or value == "-": return "-"
-    try:
-        val = float(value)
-        if val >= 1_000_000 or val <= -1_000_000:
-            return f"{val / 1_000_000:.1f}M"
-        elif val >= 1_000 or val <= -1_000:
-            return f"{val / 1_000:.1f}K"
-        else:
-            return str(int(val))
-    except:
-        return str(value)
-
-# 色付け関数
-def color_val(val, prefix=""):
-    if pd.isna(val) or val == "-": return "-"
-    try:
-        v = float(val)
-        color = "red" if v > 0 else "blue" if v < 0 else "black"
-        sign = "+" if v > 0 else ""
-        formatted = format_km(v)
-        return f"<span style='color:{color}; font-weight:bold;'>{prefix}{sign}{formatted}</span>"
-    except:
-        return str(val)
-
 if ticker:
-    # 銘柄名の取得と表示
-    stock_name = get_stock_name(ticker)
-    display_title = f"{ticker} {stock_name}" if stock_name else f"銘柄コード: {ticker}"
-    st.write(f"### {display_title} のデータ")
+    st.subheader(f"{ticker} のデータ")
     
-    # Yahoo Financeから株価と出来高を取得
-    t_code = ticker + ".T"
-    stock = yf.Ticker(t_code)
-    hist = stock.history(period="1mo").tail(10).sort_index(ascending=False)
+    # --- 表示期間の選択UI ---
+    period_option = st.selectbox(
+        "表示期間を選択：",
+        ["直近1ヶ月", "直近3ヶ月", "直近半年", "1年", "1年半（最大）"],
+        index=0
+    )
     
-    if hist.empty:
-        st.error("株価データが取得できませんでした。コードを確認してください。")
-    else:
-        # 空白によるマークダウンの誤作動を防ぐため1行ずつ結合
-        html = ""
-        html += "<table style='width:100%; border-collapse: collapse; text-align:center; font-size:14px; font-family:sans-serif;'>"
-        html += "<tr style='background-color:#333; color:white;'>"
-        html += "<th rowspan='2' style='border:1px solid #aaa; padding:8px;'>Date</th>"
-        html += "<th rowspan='2' style='border:1px solid #aaa; padding:8px;'>前日比<br><span style='font-size:11px; color:#ddd;'>出来高</span></th>"
-        html += "<th colspan='4' style='border:1px solid #aaa; padding:8px;'>機関投資家の空売り</th>"
-        html += "<th colspan='2' style='border:1px solid #aaa; padding:8px;'>個人信用</th>"
-        html += "</tr>"
-        html += "<tr style='background-color:#555; color:white; font-size:12px;'>"
-        html += "<th style='border:1px solid #aaa; padding:5px;'>Barclays</th>"
-        html += "<th style='border:1px solid #aaa; padding:5px;'>JPM</th>"
-        html += "<th style='border:1px solid #aaa; padding:5px;'>モルガン</th>"
-        html += "<th style='border:1px solid #aaa; padding:5px; background-color:#444;'>全増減</th>"
-        html += "<th style='border:1px solid #aaa; padding:5px;'>売</th>"
-        html += "<th style='border:1px solid #aaa; padding:5px;'>買</th>"
-        html += "</tr>"
-        
-        # データの行を作成
-        for idx, row in hist.iterrows():
-            date_str = idx.strftime("%m/%d<br>%a")
-            volume = row['Volume']
-            
-            # 以下はレイアウト確認用のダミー数値です
-            diff_color = "red"
-            diff_sign = "+"
-            inst1 = color_val(50000)
-            inst2 = color_val(-120000)
-            inst3 = "-"
-            total_inst = color_val(-70000)
-            margin_sell_total = format_km(1500000)
-            margin_sell_diff = color_val(20000)
-            margin_buy_total = format_km(3200000)
-            margin_buy_diff = color_val(-50000)
-            
-            html += "<tr>"
-            html += f"<td style='border:1px solid #ccc; padding:8px; font-weight:bold;'>{date_str}</td>"
-            html += f"<td style='border:1px solid #ccc; padding:8px; background-color:#f9f9f9;'><span style='color:{diff_color}; font-weight:bold;'>{diff_sign}2.50%</span><br><span style='font-size:12px; color:#555;'>{format_km(volume)}株</span></td>"
-            html += f"<td style='border:1px solid #ccc; padding:8px;'>{inst1}</td>"
-            html += f"<td style='border:1px solid #ccc; padding:8px;'>{inst2}</td>"
-            html += f"<td style='border:1px solid #ccc; padding:8px;'>{inst3}</td>"
-            html += f"<td style='border:1px solid #ccc; padding:8px; background-color:#f0f0f0;'>{total_inst}</td>"
-            html += f"<td style='border:1px solid #ccc; padding:8px;'><span style='font-weight:bold;'>{margin_sell_total}</span><br><span style='font-size:12px;'>{margin_sell_diff}</span></td>"
-            html += f"<td style='border:1px solid #ccc; padding:8px;'><span style='font-weight:bold;'>{margin_buy_total}</span><br><span style='font-size:12px;'>{margin_buy_diff}</span></td>"
-            html += "</tr>"
-        
-        html += "</table>"
-        
-        st.markdown(html, unsafe_allow_html=True)
-        
-        st.info("💡 **システムからのメッセージ**: 現在は画面レイアウト（上下2段表示やK/M短縮表記）の確認用バージョンです。")
+    # 期間に応じた日数の定義
+    days_map = {
+        "直近1ヶ月": 30,
+        "直近3ヶ月": 90,
+        "直近半年": 180,
+        "1年": 365,
+        "1年半（最大）": 540
+    }
+    selected_days = days_map[period_option]
+    
+    # --- デモ用データフレームの生成（※後ほどスプレッドシートからの実データ取得に完全連動させます） ---
+    # ここでは選択された期間に合わせてダミー行数を変化させています
+    date_list = [datetime.date.today() - datetime.timedelta(days=i) for i in range(selected_days)]
+    # 土日を除外する簡易フィルター
+    date_list = [d for d in date_list if d.weekday() < 5]
+    
+    df = pd.DataFrame({
+        "Date": [d.strftime("%m/%d\n%a") for d in date_list],
+        "前日比・出来高": ["+2.5%\n1.4M株"] * len(date_list),
+        "Barclays": ["+50.0K"] * len(date_list),
+        "JPM": ["-120.0K"] * len(date_list),
+        "モルガン": ["-"] * len(date_list),
+        "全増減": ["-70.0K"] * len(date_list),
+        "売残": ["1.5M\n+20.0K"] * len(date_list),
+        "買残": ["3.2M\n-50.0K"] * len(date_list),
+    })
+    
+    # --- テーブルの描画 ---
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True
+    )
