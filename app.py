@@ -11,7 +11,7 @@ st.title("株価・信用残・機関空売りダッシュボード")
 ticker = st.text_input("銘柄コード（4桁）を入力してください", value="6323")
 
 if ticker:
-    st.subheader(f"{ticker} のデータ")
+    st.subheader(f"{ticker} ローツェ(株)のデータ")
     
     # --- 表示期間の選択UI ---
     period_option = st.selectbox(
@@ -30,26 +30,67 @@ if ticker:
     }
     selected_days = days_map[period_option]
     
-    # --- デモ用データフレームの生成（※後ほどスプレッドシートからの実データ取得に完全連動させます） ---
-    # ここでは選択された期間に合わせてダミー行数を変化させています
+    # --- 日付リストの生成（選択された期間に応じて行数を変更） ---
     date_list = [datetime.date.today() - datetime.timedelta(days=i) for i in range(selected_days)]
-    # 土日を除外する簡易フィルター
-    date_list = [d for d in date_list if d.weekday() < 5]
+    date_list = [d for d in date_list if d.weekday() < 5] # 土日を除外
     
-    df = pd.DataFrame({
-        "Date": [d.strftime("%m/%d\n%a") for d in date_list],
-        "前日比・出来高": ["+2.5%\n1.4M株"] * len(date_list),
-        "Barclays": ["+50.0K"] * len(date_list),
-        "JPM": ["-120.0K"] * len(date_list),
-        "モルガン": ["-"] * len(date_list),
-        "全増減": ["-70.0K"] * len(date_list),
-        "売残": ["1.5M\n+20.0K"] * len(date_list),
-        "買残": ["3.2M\n-50.0K"] * len(date_list),
-    })
+    # --- 2枚目のデザインを再現するHTMLテーブルの構築 ---
+    html_rows = ""
+    for d in date_list:
+        date_str = d.strftime("%m/%d<br>%a")
+        html_rows += f"""
+        <tr>
+            <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #fff;">{date_str}</td>
+            <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #fff;">
+                <div style="color: #d32f2f; font-weight: bold;">+2.5%</div>
+                <div style="color: #666; font-size: 0.85em;">1.4M株</div>
+            </td>
+            <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #fff;">
+                <div style="color: #d32f2f; font-weight: bold;">+50.0K</div>
+            </td>
+            <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #fff;">
+                <div style="color: #1976d2; font-weight: bold;">-120.0K</div>
+            </td>
+            <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #fff;">
+                <div style="color: #666;">-</div>
+            </td>
+            <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #fff;">
+                <div style="color: #1976d2; font-weight: bold;">-70.0K</div>
+            </td>
+            <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #fff;">
+                <div style="font-weight: bold;">1.5M</div>
+                <div style="color: #d32f2f; font-size: 0.85em;">+20.0K</div>
+            </td>
+            <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #fff;">
+                <div style="font-weight: bold;">3.2M</div>
+                <div style="color: #1976d2; font-size: 0.85em;">-50.0K</div>
+            </td>
+        </tr>
+        """
+        
+    html_table = f"""
+    <table style="width:100%; border-collapse: collapse; font-family: sans-serif; font-size: 14px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <thead>
+            <tr style="background-color: #262730; color: white;">
+                <th rowspan="2" style="border: 1px solid #444; padding: 10px; text-align: center; width: 12%;">Date</th>
+                <th rowspan="2" style="border: 1px solid #444; padding: 10px; text-align: center; width: 14%;">前日比<br>出来高</th>
+                <th colspan="3" style="border: 1px solid #444; padding: 8px; text-align: center;">機関投資家の空売り</th>
+                <th rowspan="2" style="border: 1px solid #444; padding: 10px; text-align: center; width: 12%;">全増減</th>
+                <th colspan="2" style="border: 1px solid #444; padding: 8px; text-align: center;">個人信用</th>
+            </tr>
+            <tr style="background-color: #3b3c43; color: white;">
+                <th style="border: 1px solid #555; padding: 6px; text-align: center;">Barclays</th>
+                <th style="border: 1px solid #555; padding: 6px; text-align: center;">JPM</th>
+                <th style="border: 1px solid #555; padding: 6px; text-align: center;">モルガン</th>
+                <th style="border: 1px solid #555; padding: 6px; text-align: center;">売</th>
+                <th style="border: 1px solid #555; padding: 6px; text-align: center;">買</th>
+            </tr>
+        </thead>
+        <tbody>
+            {html_rows}
+        </tbody>
+    </table>
+    """
     
-    # --- テーブルの描画 ---
-    st.dataframe(
-        df,
-        use_container_width=True,
-        hide_index=True
-    )
+    # HTMLの描画
+    st.markdown(html_table, unsafe_allow_html=True)
