@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
+import requests
+from bs4 import BeautifulSoup
 
 st.set_page_config(page_title="信用残・空売り確認ツール", layout="wide")
 
@@ -8,6 +10,20 @@ st.title("株価・信用残・機関空売り ダッシュボード")
 
 # 銘柄コード入力
 ticker = st.text_input("銘柄コード（4桁）を入力してください", value="6323")
+
+# 銘柄名を取得する関数（Yahooファイナンスから日本語名を取得）
+@st.cache_data(ttl=3600) # 1時間記憶させて動作を軽くする設定
+def get_stock_name(t_code):
+    try:
+        url = f"https://finance.yahoo.co.jp/quote/{t_code}.T"
+        res = requests.get(url, timeout=5)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        title = soup.find('title').text
+        # 例: "ローツェ(株)【6323】：株価・株式情報 - Yahoo!ファイナンス" から名前だけ抽出
+        name = title.split('【')[0]
+        return name
+    except:
+        return ""
 
 # ユーティリティ関数：K/Mフォーマット
 def format_km(value):
@@ -36,7 +52,10 @@ def color_val(val, prefix=""):
         return str(val)
 
 if ticker:
-    st.write(f"### 銘柄コード: {ticker} のデータ")
+    # 銘柄名の取得と表示
+    stock_name = get_stock_name(ticker)
+    display_title = f"{ticker} {stock_name}" if stock_name else f"銘柄コード: {ticker}"
+    st.write(f"### {display_title} のデータ")
     
     # Yahoo Financeから株価と出来高を取得
     t_code = ticker + ".T"
@@ -46,7 +65,7 @@ if ticker:
     if hist.empty:
         st.error("株価データが取得できませんでした。コードを確認してください。")
     else:
-        # 空白（インデント）によるマークダウンの誤作動を防ぐため、1行ずつ結合
+        # 空白によるマークダウンの誤作動を防ぐため1行ずつ結合
         html = ""
         html += "<table style='width:100%; border-collapse: collapse; text-align:center; font-size:14px; font-family:sans-serif;'>"
         html += "<tr style='background-color:#333; color:white;'>"
