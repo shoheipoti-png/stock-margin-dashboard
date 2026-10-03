@@ -4,3 +4,5 @@ yfinance
 plotly
 requests
 beautifulsoup4
+gspread
+google-auth
