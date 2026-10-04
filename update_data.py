@@ -41,7 +41,7 @@ def main():
     pdf_file = io.BytesIO(pdf_res.content)
     
     today_str = datetime.datetime.now().strftime("%Y-%m-%d")
-    data_dict = {}
+    new_rows = []
     
     print("PDFの解析を開始します...")
     with pdfplumber.open(pdf_file) as pdf:
@@ -49,47 +49,49 @@ def main():
             text = page.extract_text(layout=True)
             if not text: continue
             
-            is_total_page = "合計 Total" in text
-            is_detail_page = "一般信用" in text and "制度信用" in text
-            
             for line in text.split('\n'):
+                # 金額行は無視し、「株数 Shs.」の行だけをターゲットにする
                 if '株数 Shs.' not in line:
                     continue
                     
+                # 銘柄コード（4桁＋0）を抽出
                 code_match = re.search(r'(?:^|\s)([A-Z0-9]{4})0\s+JP', line)
                 if not code_match: continue
                 code = code_match.group(1)
                 
+                # 「株数 Shs.」以降のデータを切り出してクリーニング
                 data_part = line.split('株数 Shs.')[1]
                 data_part = data_part.replace('▲ ', '-').replace('▲', '-').replace(',', '')
                 
+                # ハイフンやアスタリスクは 0 に変換
                 tokens = [t if t not in ['-', '*'] else '0' for t in data_part.split()]
+                # 純粋な数値トークンのみを抽出
+                nums = [t for t in tokens if re.match(r'^[\-\+]?\d+$', t)]
                 
-                if code not in data_dict:
-                    data_dict[code] = {"tot_sell": "0", "tot_buy": "0", "gen_sell": "0", "std_sell": "0", "gen_buy": "0", "std_buy": "0"}
-                
-                if is_total_page and len(tokens) >= 4:
+                # JPXの構造上、株数行には合計・一般・制度の数値が順番に並びます
+                # 正常にすべての数値が揃っている行（通常12〜13個の数値ブロック）を対象にします
+                if len(nums) >= 12:
                     try:
-                        data_dict[code]["tot_sell"] = tokens[0]
-                        data_dict[code]["tot_buy"] = tokens[3]
-                    except IndexError:
-                        pass
+                        # 並び順の構造定義：
+                        # [0]: 売残(合計)
+                        # [3]: 売残(一般)
+                        # [5]: 売残(制度)
+                        # [7]: 買残(合計)
+                        # [9]: 買残(一般)
+                        # [11]: 買残(制度)
+                        tot_sell = nums[0]
+                        gen_sell = nums[3]
+                        std_sell = nums[5]
+                        tot_buy  = nums[7]
+                        gen_buy  = nums[9]
+                        std_buy  = nums[11]
                         
-                elif is_detail_page and len(tokens) >= 7:
-                    try:
-                        data_dict[code]["gen_sell"] = tokens[0]
-                        data_dict[code]["std_sell"] = tokens[2]
-                        data_dict[code]["gen_buy"]  = tokens[4]
-                        data_dict[code]["std_buy"]  = tokens[6]
+                        new_rows.append([
+                            today_str, code, tot_sell, gen_sell, std_sell, 
+                            tot_buy, gen_buy, std_buy
+                        ])
                     except IndexError:
                         pass
-
-    new_rows = []
-    for code, vals in data_dict.items():
-        new_rows.append([
-            today_str, code, vals["tot_sell"], vals["gen_sell"], vals["std_sell"], 
-            vals["tot_buy"], vals["gen_buy"], vals["std_buy"]
-        ])
 
     print(f"{len(new_rows)} 銘柄分のデータを抽出しました。")
     
@@ -97,10 +99,10 @@ def main():
     headers = ["日付", "銘柄コード", "売残(合計)", "売残(一般)", "売残(制度)", "買残(合計)", "買残(一般)", "買残(制度)"]
     data_rows = []
     
-    # 【修正箇所】「完全に空の行」が存在してもエラーで落ちないよう、長さ（len）を厳密にチェック
     if existing_data and len(existing_data[0]) > 0 and existing_data[0][0] == "日付" and len(existing_data[0]) == len(headers):
         data_rows = existing_data[1:]
     
+    # 450日ローリング処理
     cutoff_date = datetime.datetime.now() - datetime.timedelta(days=450)
     cutoff_date_str = cutoff_date.strftime("%Y-%m-%d")
     
