@@ -36,6 +36,20 @@ def smart_format(val):
     except:
         return str(val)
 
+def format_change(val):
+    """前日比のプラスマイナスに色と符号を付ける"""
+    try:
+        if val == "" or val == "-" or val == "0": return "0", "#666", "#f0f2f6"
+        num = float(val)
+        color = "#d32f2f" if num > 0 else "#1976d2"
+        bg = "#ffebee" if num > 0 else "#e3f2fd"
+        sign = "+" if num > 0 else ""
+        if abs(num) >= 1_000_000: return f"{sign}{num / 1_000_000:.1f}M", color, bg
+        elif abs(num) >= 1_000: return f"{sign}{num / 1_000:.1f}K", color, bg
+        else: return f"{sign}{int(num)}", color, bg
+    except:
+        return str(val), "#666", "#f0f2f6"
+
 ticker = st.text_input("銘柄コード（4桁）を入力してください", value="6323")
 
 if ticker:
@@ -51,22 +65,22 @@ if ticker:
     
     df = load_data_from_sheet()
     
-# 取得失敗時・空時のダミー
     if df.empty or "銘柄コード" not in df.columns:
         date_list = [datetime.date.today() - datetime.timedelta(days=i) for i in range(selected_days)]
         date_list = [d for d in date_list if d.weekday() < 5]
-        
-        # すべての要素の配列長さを合わせることでエラーを解消
+        length = len(date_list)
         df = pd.DataFrame({
             "日付": [d.strftime("%Y-%m-%d") for d in date_list],
-            "銘柄コード": [ticker] * len(date_list),
-            "機関空売り増減": ["-"] * len(date_list),
-            "売残(合計)": ["8800"] * len(date_list),
-            "売残(一般)": ["0"] * len(date_list),
-            "売残(制度)": ["8800"] * len(date_list),
-            "買残(合計)": ["157700"] * len(date_list),
-            "買残(一般)": ["37500"] * len(date_list),
-            "買残(制度)": ["120200"] * len(date_list),
+            "銘柄コード": [ticker] * length,
+            "機関空売り増減": ["-"] * length,
+            "売残(合計)": ["8800"] * length,
+            "売残(前日比)": ["-200"] * length,
+            "売残(一般)": ["0"] * length,
+            "売残(制度)": ["8800"] * length,
+            "買残(合計)": ["157700"] * length,
+            "買残(前日比)": ["1200"] * length,
+            "買残(一般)": ["37500"] * length,
+            "買残(制度)": ["120200"] * length,
         })
         
     df_filtered = df[df["銘柄コード"].astype(str) == str(ticker)]
@@ -83,15 +97,14 @@ if ticker:
         short = smart_format(row.get("機関空売り増減", "-"))
         
         tot_sell = smart_format(row.get("売残(合計)", "-"))
+        sell_chg_str, sell_chg_color, sell_chg_bg = format_change(row.get("売残(前日比)", "-"))
         gen_sell = smart_format(row.get("売残(一般)", "-"))
         std_sell = smart_format(row.get("売残(制度)", "-"))
         
         tot_buy = smart_format(row.get("買残(合計)", "-"))
+        buy_chg_str, buy_chg_color, buy_chg_bg = format_change(row.get("買残(前日比)", "-"))
         gen_buy = smart_format(row.get("買残(一般)", "-"))
         std_buy = smart_format(row.get("買残(制度)", "-"))
-        
-        diff_bg = "#ffebee" if not str(short).startswith("-") and short != "-" else "#e3f2fd" if str(short).startswith("-") else "#fff"
-        diff_color = "#d32f2f" if not str(short).startswith("-") and short != "-" else "#1976d2" if str(short).startswith("-") else "#666"
         
         row_html = f"""
         <tr>
@@ -99,25 +112,27 @@ if ticker:
             <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #fff;">
                 <div style="color: #666;">-</div>
             </td>
-            <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: {diff_bg};">
-                <div style="color: {diff_color}; font-weight: bold;">{short}</div>
-            </td>
             <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #fff;">
                 <div style="color: #666;">-</div>
             </td>
             <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #fff;">
                 <div style="color: #666;">-</div>
             </td>
-            <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: {diff_bg};">
-                <div style="color: {diff_color}; font-weight: bold;">{short}</div>
+            <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #fff;">
+                <div style="color: #666;">-</div>
+            </td>
+            <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #fff;">
+                <div style="color: #666;">-</div>
             </td>
             <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #fff;">
                 <div style="font-weight: bold; font-size: 1.1em;">{tot_sell}</div>
-                <div style="color: #666; font-size: 0.75em; margin-top: 2px;">般: {gen_sell} / 制: {std_sell}</div>
+                <div style="color: {sell_chg_color}; background-color: {sell_chg_bg}; font-size: 0.85em; padding: 2px; margin: 4px 0; border-radius: 2px;">{sell_chg_str}</div>
+                <div style="color: #666; font-size: 0.75em;">般: {gen_sell} / 制: {std_sell}</div>
             </td>
             <td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #fff;">
                 <div style="font-weight: bold; font-size: 1.1em;">{tot_buy}</div>
-                <div style="color: #666; font-size: 0.75em; margin-top: 2px;">般: {gen_buy} / 制: {std_buy}</div>
+                <div style="color: {buy_chg_color}; background-color: {buy_chg_bg}; font-size: 0.85em; padding: 2px; margin: 4px 0; border-radius: 2px;">{buy_chg_str}</div>
+                <div style="color: #666; font-size: 0.75em;">般: {gen_buy} / 制: {std_buy}</div>
             </td>
         </tr>
         """
@@ -131,7 +146,7 @@ if ticker:
                 <th rowspan="2" style="border: 1px solid #444; padding: 10px; text-align: center; width: 10%;">前日比<br>出来高</th>
                 <th colspan="3" style="border: 1px solid #444; padding: 8px; text-align: center;">機関投資家の空売り</th>
                 <th rowspan="2" style="border: 1px solid #444; padding: 10px; text-align: center; width: 10%;">全増減</th>
-                <th colspan="2" style="border: 1px solid #444; padding: 8px; text-align: center;">個人信用 (合計・内訳)</th>
+                <th colspan="2" style="border: 1px solid #444; padding: 8px; text-align: center;">個人信用 (合計・前日差・内訳)</th>
             </tr>
             <tr style="background-color: #3b3c43; color: white;">
                 <th style="border: 1px solid #555; padding: 6px; text-align: center;">Barclays</th>
