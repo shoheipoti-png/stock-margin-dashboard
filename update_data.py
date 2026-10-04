@@ -16,9 +16,8 @@ def get_latest_pdf_url():
     res.encoding = res.apparent_encoding
     soup = BeautifulSoup(res.text, 'html.parser')
     for a in soup.find_all('a', href=True):
-        href = a['href']
-        if '_mtall.pdf' in href:
-            return href if href.startswith('http') else "https://www.jpx.co.jp" + href
+        if '_mtall.pdf' in a['href']:
+            return a['href'] if a['href'].startswith('http') else "https://www.jpx.co.jp" + a['href']
     return None
 
 def main():
@@ -42,8 +41,7 @@ def main():
     print("PDFの解析を開始します...")
     with pdfplumber.open(pdf_file) as pdf:
         current_code = None
-        tot_sell = None
-        tot_buy = None
+        saved_line1 = {}
         
         for page in pdf.pages:
             text = page.extract_text(layout=True)
@@ -52,53 +50,55 @@ def main():
             for line in text.split('\n'):
                 line = line.replace('▲ ', '-').replace('▲', '-').replace(',', '')
                 
-                # 1. 銘柄コードと「株数」の行を特定
+                # 1. 銘柄コードと株数(Shs.)の行を特定
                 match = re.search(r'(?:^|\s)(\d{4})0\s+JP', line)
                 if match:
-                    current_code = match.group(1)
                     if 'Shs.' in line:
-                        parts = line.split('Shs.')[-1].split()
-                        nums = [p for p in parts if re.match(r'^[\-\+]?\d+$', p)]
-                        if len(nums) >= 2:
-                            tot_sell = nums[0]  # 左端が売残合計
-                            tot_buy = nums[-2]  # 右から2番目が買残合計（一番右は前日比）
+                        current_code = match.group(1)
+                        data_part = line.split('Shs.')[-1]
+                        tokens = data_part.split()
+                        # 数値またはハイフンのみを抽出 (比率の%を除外)
+                        nums = [p for p in tokens if re.match(r'^[\-\+]?[0-9\.]+$', p) or p == '-']
+                        if len(nums) >= 4:
+                            saved_line1 = {
+                                'tot_sell': nums[0],
+                                'tot_sell_chg': nums[1],
+                                'tot_buy': nums[-2],
+                                'tot_buy_chg': nums[-1]
+                            }
+                    # 2. 金額(Val.)の行は完全に無視
                     continue
                 
-                # 2. 金額の行は完全に無視
-                if 'Val.' in line:
-                    continue
-                
-                # 3. 内訳（一般・制度）の行の抽出
-                if current_code and tot_sell and tot_buy:
-                    parts = line.split()
-                    nums = [p for p in parts if re.match(r'^[\-\+]?\d+$', p)]
+                # 3. 内訳（一般・制度）の行の抽出（コード取得の直後に出現）
+                if current_code and saved_line1:
+                    tokens = line.split()
+                    nums = [p for p in tokens if re.match(r'^[\-\+]?[0-9\.]+$', p) or p == '-']
                     
-                    # 内訳行には0や数値が多数並ぶ
-                    if len(nums) >= 6:
+                    if len(nums) >= 8:
                         gen_sell = nums[0]
-                        std_sell = nums[2] if len(nums) > 2 else "0"
-                        gen_buy = nums[4] if len(nums) > 4 else "0"
-                        std_buy = nums[6] if len(nums) > 6 else "0"
+                        std_sell = nums[2]
+                        gen_buy = nums[4]
+                        std_buy = nums[6]
                         
-                        new_rows.append([today_str, current_code, "-", tot_sell, gen_sell, std_sell, tot_buy, gen_buy, std_buy])
+                        new_rows.append([
+                            today_str, current_code, "-", 
+                            saved_line1['tot_sell'], saved_line1['tot_sell_chg'], gen_sell, std_sell, 
+                            saved_line1['tot_buy'], saved_line1['tot_buy_chg'], gen_buy, std_buy
+                        ])
                         
-                        # 次の銘柄に向けてリセット
+                        # 次の銘柄のためにリセット
                         current_code = None
-                        tot_sell = None
-                        tot_buy = None
+                        saved_line1 = {}
 
     print(f"{len(new_rows)} 銘柄分のデータを抽出しました。")
     
+    # スプレッドシートの更新（全11列）
     existing_data = worksheet.get_all_values()
-    if not existing_data or existing_data[0][0] != "日付":
-        headers = ["日付", "銘柄コード", "機関空売り増減", "売残(合計)", "売残(一般)", "売残(制度)", "買残(合計)", "買残(一般)", "買残(制度)"]
-        data_rows = []
-    else:
-        headers = existing_data[0]
-        data_rows = existing_data[1:]
+    headers = ["日付", "銘柄コード", "機関空売り増減", "売残(合計)", "売残(前日比)", "売残(一般)", "売残(制度)", "買残(合計)", "買残(前日比)", "買残(一般)", "買残(制度)"]
+    data_rows = existing_data[1:] if existing_data and existing_data[0][0] == "日付" else []
     
-    # データ保持期間を1年（250営業日/365日）に設定し、容量オーバーを防止
-    cutoff_date = datetime.datetime.now() - datetime.timedelta(days=365)
+    # 250営業日（約1年分）をローリング維持
+    cutoff_date = datetime.datetime.now() - datetime.timedelta(days=250)
     cutoff_date_str = cutoff_date.strftime("%Y-%m-%d")
     
     filtered_rows = [row for row in data_rows if len(row) > 0 and row[0] >= cutoff_date_str]
@@ -106,7 +106,7 @@ def main():
     
     worksheet.clear()
     worksheet.update('A1', [headers] + filtered_rows)
-    print("スプレッドシートへの書き込みとローリング整理が完了しました。")
+    print("スプレッドシートの更新が完了しました。")
 
 if __name__ == "__main__":
     main()
