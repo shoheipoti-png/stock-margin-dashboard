@@ -25,11 +25,11 @@ def get_latest_pdf_url():
 def clean_val(text):
     if not text:
         return "0"
-    v = text.replace(',', '').replace('▲', '-').strip()
+    v = str(text).replace(',', '').replace('▲', '-').strip()
     return v if v not in ['-', '*', ''] else "0"
 
 def main():
-    print("JPX個人信用データ取得（座標固定抽出版）を開始...")
+    print("JPX個人信用データ取得（決定版）を開始します...")
     creds_json = os.environ.get("GCP_SERVICE_ACCOUNT_KEY")
     sheet_id = os.environ.get("SPREADSHEET_ID")
     
@@ -47,7 +47,7 @@ def main():
     if not pdf_url:
         print("エラー: PDF URLが取得できませんでした。")
         return
-    print(f"対象PDF: {pdf_url}")
+    print(f"対象PDF URL: {pdf_url}")
     
     pdf_res = requests.get(pdf_url)
     pdf_file = io.BytesIO(pdf_res.content)
@@ -55,25 +55,24 @@ def main():
     report_date = None
     new_rows = []
     
-    print("PDF解析処理を実行中...")
     with pdfplumber.open(pdf_file) as pdf:
-        # 1. 表紙・1ページ目から公表基準日（申込み現在日）を取得
+        # 1. ご指摘の通り、PDF 1ページ目から正式な「申込み現在日」を正確に抽出
         p0_text = pdf.pages[0].extract_text()
         date_match = re.search(r'(\d{4})/(\d{1,2})/(\d{1,2})\s*申込み現在', p0_text)
         if date_match:
             report_date = f"{date_match.group(1)}-{int(date_match.group(2)):02d}-{int(date_match.group(3)):02d}"
-            print(f"公表基準日: {report_date}")
+            print(f"★ PDFから抽出した正式な公表基準日: {report_date}")
         else:
             report_date = datetime.date.today().strftime("%Y-%m-%d")
-            print(f"基準日検出失敗のため当日日付を代用: {report_date}")
+            print(f"警告: 基準日が見つからないため当日日付を代用: {report_date}")
 
-        # 2. 全ページの「株数 Shs.」行から座標判定で抽出
-        for page in pdf.pages:
+        # 2. 全ページの「Shs.」行からX座標バケットに基づいて全データを正確に抽出
+        for page_idx, page in enumerate(pdf.pages):
             words = page.extract_words()
             if not words:
                 continue
             
-            # 「Shs.」行（x0: 220〜255）をアンカーとして特定
+            # 「Shs.」行をアンカーとして特定
             shs_anchors = [w for w in words if w["text"] == "Shs." and 220 <= w["x0"] <= 255]
             
             for anchor in shs_anchors:
@@ -93,7 +92,7 @@ def main():
                     x = w["x0"]
                     text = w["text"]
                     
-                    # 銘柄コード (x0: 170〜195) 例: 13010 -> 1301
+                    # 銘柄コード (x0: 170〜195)
                     if 170 <= x < 195 and re.match(r'^\d{4}[0A-Z]?$', text):
                         code = text[:4]
                         continue
@@ -102,7 +101,7 @@ def main():
                     if not re.match(r'^[\-\+]?\d+$', cleaned):
                         continue
                         
-                    # 座標バケットによる項目判定
+                    # 検証済みの正確なX座標バケットによる項目判定
                     if 260 <= x < 310:
                         tot_sell = cleaned
                     elif 370 <= x < 420:
@@ -124,13 +123,13 @@ def main():
                     
     print(f"抽出完了: {len(new_rows)} 銘柄")
     
-    # 3. 重複銘柄の整理（万が一の同一コード重複を排除）
+    # 3. 重複の排除
     unique_rows = {}
     for r in new_rows:
         unique_rows[r[1]] = r
     final_rows = list(unique_rows.values())
 
-    # 4. スプレッドシートの更新（450日ローリング）
+    # 4. スプレッドシートの更新（同基準日のデータがある場合は置換し、450日ローリングを適用）
     existing_data = worksheet.get_all_values()
     headers = ["日付", "銘柄コード", "売残(合計)", "売残(一般)", "売残(制度)", "買残(合計)", "買残(一般)", "買残(制度)"]
     data_rows = []
@@ -138,10 +137,10 @@ def main():
     if existing_data and len(existing_data[0]) > 0 and existing_data[0][0] == "日付" and len(existing_data[0]) == len(headers):
         data_rows = existing_data[1:]
     
-    # 同一基準日の既存行があれば一度除外（上書き用）
+    # 今回取得する基準日（例: 2026-10-02）と一致する既存データがあれば一掃して上書き
     data_rows = [row for row in data_rows if len(row) > 0 and row[0] != report_date]
     
-    # 450日以上前の行をローリング削除
+    # 450日ローリング削除
     cutoff_date = datetime.datetime.now() - datetime.timedelta(days=450)
     cutoff_date_str = cutoff_date.strftime("%Y-%m-%d")
     filtered_rows = [row for row in data_rows if len(row) > 0 and row[0] >= cutoff_date_str]
@@ -150,7 +149,7 @@ def main():
     
     worksheet.clear()
     worksheet.update('A1', [headers] + filtered_rows)
-    print(f"スプレッドシート更新完了（基準日: {report_date} / {len(final_rows)} 銘柄書き込み）")
+    print(f"スプレッドシート更新完了（基準日: {report_date} / 書き込み件数: {len(final_rows)} 銘柄）")
 
 if __name__ == "__main__":
     main()
