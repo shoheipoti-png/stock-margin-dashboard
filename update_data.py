@@ -42,6 +42,8 @@ def main():
     credentials = Credentials.from_service_account_info(creds_dict, scopes=scope)
     client = gspread.authorize(credentials)
     worksheet = client.open_by_key(sheet_id).sheet1
+    print(f"現在書き込んでいるスプレッドシートのタイトル: {client.open_by_key(sheet_id).title}")
+print(f"ワークシート名: {worksheet.title}")
     
     pdf_url = get_latest_pdf_url()
     if not pdf_url:
