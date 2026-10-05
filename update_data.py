@@ -12,6 +12,7 @@ from google.oauth2.service_account import Credentials
 JPX_URL = "https://www.jpx.co.jp/markets/statistics-equities/margin/01.html"
 
 def get_latest_pdf_url():
+    """JPXのページから最新の銘柄別信用取引残高PDFのURLを取得"""
     res = requests.get(JPX_URL)
     res.encoding = res.apparent_encoding
     soup = BeautifulSoup(res.text, 'html.parser')
@@ -21,14 +22,14 @@ def get_latest_pdf_url():
             return href if href.startswith('http') else "https://www.jpx.co.jp" + href
     return None
 
-def clean_value(val):
-    if not val:
+def clean_val(text):
+    if not text:
         return "0"
-    v = val.replace(',', '').replace('▲', '-').strip()
+    v = text.replace(',', '').replace('▲', '-').strip()
     return v if v not in ['-', '*', ''] else "0"
 
 def main():
-    print("JPX個人信用データ取得（座標固定バケット方式）を開始します...")
+    print("JPX個人信用データ取得（座標固定抽出版）を開始...")
     creds_json = os.environ.get("GCP_SERVICE_ACCOUNT_KEY")
     sheet_id = os.environ.get("SPREADSHEET_ID")
     
@@ -51,22 +52,33 @@ def main():
     pdf_res = requests.get(pdf_url)
     pdf_file = io.BytesIO(pdf_res.content)
     
-    today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    report_date = None
     new_rows = []
     
-    print("PDF解析開始...")
+    print("PDF解析処理を実行中...")
     with pdfplumber.open(pdf_file) as pdf:
+        # 1. 表紙・1ページ目から公表基準日（申込み現在日）を取得
+        p0_text = pdf.pages[0].extract_text()
+        date_match = re.search(r'(\d{4})/(\d{1,2})/(\d{1,2})\s*申込み現在', p0_text)
+        if date_match:
+            report_date = f"{date_match.group(1)}-{int(date_match.group(2)):02d}-{int(date_match.group(3)):02d}"
+            print(f"公表基準日: {report_date}")
+        else:
+            report_date = datetime.date.today().strftime("%Y-%m-%d")
+            print(f"基準日検出失敗のため当日日付を代用: {report_date}")
+
+        # 2. 全ページの「株数 Shs.」行から座標判定で抽出
         for page in pdf.pages:
             words = page.extract_words()
             if not words:
                 continue
             
-            # 「Shs.」のアンカー単語を特定（Val.は無視）
-            shs_anchors = [w for w in words if w["text"] == "Shs." and 220 < w["x0"] < 255]
+            # 「Shs.」行（x0: 220〜255）をアンカーとして特定
+            shs_anchors = [w for w in words if w["text"] == "Shs." and 220 <= w["x0"] <= 255]
             
             for anchor in shs_anchors:
                 y = anchor["top"]
-                # 同じ行（Y座標の差が±3以内）にある単語群を抽出
+                # 同じ行（Y座標差 ±3 以内）の全単語を取得
                 row_words = [w for w in words if abs(w["top"] - y) <= 3]
                 
                 code = None
@@ -81,43 +93,44 @@ def main():
                     x = w["x0"]
                     text = w["text"]
                     
-                    # 銘柄コード (x: 170〜195)
+                    # 銘柄コード (x0: 170〜195) 例: 13010 -> 1301
                     if 170 <= x < 195 and re.match(r'^\d{4}[0A-Z]?$', text):
                         code = text[:4]
+                        continue
                     
-                    # 数値のみ対象
-                    clean_txt = clean_value(text)
-                    if not re.match(r'^[\-\+]?\d+$', clean_txt):
+                    cleaned = clean_val(text)
+                    if not re.match(r'^[\-\+]?\d+$', cleaned):
                         continue
                         
-                    # 売残(合計): 260〜300
-                    if 260 <= x < 300:
-                        tot_sell = clean_txt
-                    # 買残(合計): 370〜415
-                    elif 370 <= x < 415:
-                        tot_buy = clean_txt
-                    # 売残(一般): 485〜530
-                    elif 485 <= x < 530:
-                        gen_sell = clean_txt
-                    # 売残(制度): 565〜610
-                    elif 565 <= x < 610:
-                        std_sell = clean_txt
-                    # 買残(一般): 650〜695
-                    elif 650 <= x < 695:
-                        gen_buy = clean_txt
-                    # 買残(制度): 730〜775
-                    elif 730 <= x < 775:
-                        std_buy = clean_txt
+                    # 座標バケットによる項目判定
+                    if 260 <= x < 310:
+                        tot_sell = cleaned
+                    elif 370 <= x < 420:
+                        tot_buy = cleaned
+                    elif 490 <= x < 540:
+                        gen_sell = cleaned
+                    elif 570 <= x < 620:
+                        std_sell = cleaned
+                    elif 650 <= x < 700:
+                        gen_buy = cleaned
+                    elif 730 <= x < 780:
+                        std_buy = cleaned
                 
                 if code:
                     new_rows.append([
-                        today_str, code, tot_sell, gen_sell, std_sell,
+                        report_date, code, tot_sell, gen_sell, std_sell,
                         tot_buy, gen_buy, std_buy
                     ])
                     
     print(f"抽出完了: {len(new_rows)} 銘柄")
     
-    # スプレッドシート更新（450日ローリング）
+    # 3. 重複銘柄の整理（万が一の同一コード重複を排除）
+    unique_rows = {}
+    for r in new_rows:
+        unique_rows[r[1]] = r
+    final_rows = list(unique_rows.values())
+
+    # 4. スプレッドシートの更新（450日ローリング）
     existing_data = worksheet.get_all_values()
     headers = ["日付", "銘柄コード", "売残(合計)", "売残(一般)", "売残(制度)", "買残(合計)", "買残(一般)", "買残(制度)"]
     data_rows = []
@@ -125,15 +138,19 @@ def main():
     if existing_data and len(existing_data[0]) > 0 and existing_data[0][0] == "日付" and len(existing_data[0]) == len(headers):
         data_rows = existing_data[1:]
     
+    # 同一基準日の既存行があれば一度除外（上書き用）
+    data_rows = [row for row in data_rows if len(row) > 0 and row[0] != report_date]
+    
+    # 450日以上前の行をローリング削除
     cutoff_date = datetime.datetime.now() - datetime.timedelta(days=450)
     cutoff_date_str = cutoff_date.strftime("%Y-%m-%d")
-    
     filtered_rows = [row for row in data_rows if len(row) > 0 and row[0] >= cutoff_date_str]
-    filtered_rows.extend(new_rows)
+    
+    filtered_rows.extend(final_rows)
     
     worksheet.clear()
     worksheet.update('A1', [headers] + filtered_rows)
-    print("スプレッドシート更新完了。")
+    print(f"スプレッドシート更新完了（基準日: {report_date} / {len(final_rows)} 銘柄書き込み）")
 
 if __name__ == "__main__":
     main()
