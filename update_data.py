@@ -29,7 +29,7 @@ def clean_val(text):
     return v if v not in ['-', '*', ''] else "0"
 
 def main():
-    print("JPX個人信用データ取得（決定版）を開始します...")
+    print("JPX個人信用データ取得（検証済み確実版）を開始します...")
     creds_json = os.environ.get("GCP_SERVICE_ACCOUNT_KEY")
     sheet_id = os.environ.get("SPREADSHEET_ID")
     
@@ -56,28 +56,27 @@ def main():
     new_rows = []
     
     with pdfplumber.open(pdf_file) as pdf:
-        # 1. ご指摘の通り、PDF 1ページ目から正式な「申込み現在日」を正確に抽出
+        # 1. 1ページ目から正式な「申込み現在日」を正確に抽出
         p0_text = pdf.pages[0].extract_text()
         date_match = re.search(r'(\d{4})/(\d{1,2})/(\d{1,2})\s*申込み現在', p0_text)
         if date_match:
             report_date = f"{date_match.group(1)}-{int(date_match.group(2)):02d}-{int(date_match.group(3)):02d}"
-            print(f"★ PDFから抽出した正式な公表基準日: {report_date}")
+            print(f"★ 抽出された基準日: {report_date}")
         else:
             report_date = datetime.date.today().strftime("%Y-%m-%d")
             print(f"警告: 基準日が見つからないため当日日付を代用: {report_date}")
 
-        # 2. 全ページの「Shs.」行からX座標バケットに基づいて全データを正確に抽出
+        # 2. 全ページの「Shs.」行から座標バケットに基づいて全データを正確に抽出
         for page_idx, page in enumerate(pdf.pages):
             words = page.extract_words()
             if not words:
                 continue
             
-            # 「Shs.」行をアンカーとして特定
+            # テストで確認できた「Shs.」アンカー
             shs_anchors = [w for w in words if w["text"] == "Shs." and 220 <= w["x0"] <= 255]
             
             for anchor in shs_anchors:
                 y = anchor["top"]
-                # 同じ行（Y座標差 ±3 以内）の全単語を取得
                 row_words = [w for w in words if abs(w["top"] - y) <= 3]
                 
                 code = None
@@ -101,7 +100,7 @@ def main():
                     if not re.match(r'^[\-\+]?\d+$', cleaned):
                         continue
                         
-                    # 検証済みの正確なX座標バケットによる項目判定
+                    # 検証済みのX座標バケットによる項目判定
                     if 260 <= x < 310:
                         tot_sell = cleaned
                     elif 370 <= x < 420:
@@ -137,7 +136,7 @@ def main():
     if existing_data and len(existing_data[0]) > 0 and existing_data[0][0] == "日付" and len(existing_data[0]) == len(headers):
         data_rows = existing_data[1:]
     
-    # 今回取得する基準日（例: 2026-10-02）と一致する既存データがあれば一掃して上書き
+    # 今回取得する基準日と一致する既存データがあれば一掃して上書き
     data_rows = [row for row in data_rows if len(row) > 0 and row[0] != report_date]
     
     # 450日ローリング削除
