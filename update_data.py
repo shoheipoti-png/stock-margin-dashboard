@@ -29,7 +29,7 @@ def clean_val(text):
     return v if v not in ['-', '*', ''] else "0"
 
 def main():
-    print("JPX個人信用データ取得（検証済み確実版）を開始します...")
+    print("JPX個人信用データ取得（デバッグ版）を開始します...")
     creds_json = os.environ.get("GCP_SERVICE_ACCOUNT_KEY")
     sheet_id = os.environ.get("SPREADSHEET_ID")
     
@@ -42,9 +42,13 @@ def main():
     credentials = Credentials.from_service_account_info(creds_dict, scopes=scope)
     client = gspread.authorize(credentials)
     worksheet = client.open_by_key(sheet_id).sheet1
-    print(f"現在書き込んでいるスプレッドシートのタイトル: {client.open_by_key(sheet_id).title}")
-print(f"ワークシート名: {worksheet.title}")
     
+    # --- 【確認用デバッグ出力】 ---
+    print(f"★ 接続成功したスプレッドシートのタイトル: {client.open_by_key(sheet_id).title}")
+    print(f"★ 接続成功したワークシート名: {worksheet.title}")
+    print(f"★ 使用しているスプレッドシートID: {sheet_id}")
+    # ----------------------------
+
     pdf_url = get_latest_pdf_url()
     if not pdf_url:
         print("エラー: PDF URLが取得できませんでした。")
@@ -74,7 +78,6 @@ print(f"ワークシート名: {worksheet.title}")
             if not words:
                 continue
             
-            # テストで確認できた「Shs.」アンカー
             shs_anchors = [w for w in words if w["text"] == "Shs." and 220 <= w["x0"] <= 255]
             
             for anchor in shs_anchors:
@@ -93,7 +96,6 @@ print(f"ワークシート名: {worksheet.title}")
                     x = w["x0"]
                     text = w["text"]
                     
-                    # 銘柄コード (x0: 170〜195)
                     if 170 <= x < 195 and re.match(r'^\d{4}[0A-Z]?$', text):
                         code = text[:4]
                         continue
@@ -102,7 +104,6 @@ print(f"ワークシート名: {worksheet.title}")
                     if not re.match(r'^[\-\+]?\d+$', cleaned):
                         continue
                         
-                    # 検証済みのX座標バケットによる項目判定
                     if 260 <= x < 310:
                         tot_sell = cleaned
                     elif 370 <= x < 420:
@@ -124,13 +125,11 @@ print(f"ワークシート名: {worksheet.title}")
                     
     print(f"抽出完了: {len(new_rows)} 銘柄")
     
-    # 3. 重複の排除
     unique_rows = {}
     for r in new_rows:
         unique_rows[r[1]] = r
     final_rows = list(unique_rows.values())
 
-    # 4. スプレッドシートの更新（同基準日のデータがある場合は置換し、450日ローリングを適用）
     existing_data = worksheet.get_all_values()
     headers = ["日付", "銘柄コード", "売残(合計)", "売残(一般)", "売残(制度)", "買残(合計)", "買残(一般)", "買残(制度)"]
     data_rows = []
@@ -138,10 +137,8 @@ print(f"ワークシート名: {worksheet.title}")
     if existing_data and len(existing_data[0]) > 0 and existing_data[0][0] == "日付" and len(existing_data[0]) == len(headers):
         data_rows = existing_data[1:]
     
-    # 今回取得する基準日と一致する既存データがあれば一掃して上書き
     data_rows = [row for row in data_rows if len(row) > 0 and row[0] != report_date]
     
-    # 450日ローリング削除
     cutoff_date = datetime.datetime.now() - datetime.timedelta(days=450)
     cutoff_date_str = cutoff_date.strftime("%Y-%m-%d")
     filtered_rows = [row for row in data_rows if len(row) > 0 and row[0] >= cutoff_date_str]
