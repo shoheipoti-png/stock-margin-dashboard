@@ -7,6 +7,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 import streamlit.components.v1 as components
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import yfinance as yf
 
 st.set_page_config(page_title="株価・信用残・機関空売りダッシュボード", layout="wide")
@@ -72,7 +73,6 @@ def load_data_from_sheet(sheet_type="margin"):
         credentials = Credentials.from_service_account_info(creds_dict, scopes=scope)
         client = gspread.authorize(credentials)
         
-        # 正しいIDを使用
         sheet_id = DEFAULT_SPREADSHEET_ID if sheet_type == "margin" else DEFAULT_SHORT_SPREADSHEET_ID
         worksheet = client.open_by_key(sheet_id).sheet1
         records = worksheet.get_all_records()
@@ -286,12 +286,13 @@ if ticker:
             }
 
     # ----------------------------------------------------
-    # グラフ描画 (Plotly)
+    # グラフ描画 (Plotly: 2軸 - 出来高棒グラフ + 残高折れ線)
     # ----------------------------------------------------
     graph_dates = sorted(sorted_dates)
     buy_shares_list = []
     sell_shares_list = []
     inst_shares_list = []
+    vol_list = []
 
     for d in graph_dates:
         m_info = margin_map.get(d)
@@ -314,36 +315,77 @@ if ticker:
         tot_inst = total_short_by_date.get(d, None)
         inst_shares_list.append(tot_inst)
 
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=graph_dates, y=buy_shares_list,
-        mode='lines+markers', name='個人 買残合計',
-        line=dict(color='#d32f2f', width=2),
-        hovertemplate='日付: %{x}<br>買残: %{y:,.0f}株<extra></extra>'
-    ))
-    fig.add_trace(go.Scatter(
-        x=graph_dates, y=sell_shares_list,
-        mode='lines+markers', name='個人 売残合計',
-        line=dict(color='#1976d2', width=2),
-        hovertemplate='日付: %{x}<br>売残: %{y:,.0f}株<extra></extra>'
-    ))
+        # 出来高
+        p_info = stock_prices.get(d)
+        vol_list.append(p_info["volume"] if p_info else 0)
+
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+    # 1. 出来高（棒グラフ：右軸、薄いグレー・半透明で背景に配置）
+    fig.add_trace(
+        go.Bar(
+            x=graph_dates, y=vol_list,
+            name='出来高',
+            marker=dict(color='rgba(180, 190, 205, 0.45)'),
+            hovertemplate='日付: %{x}<br>出来高: %{y:,.0f}株<extra></extra>'
+        ),
+        secondary_y=True
+    )
+
+    # 2. 個人買残（赤線：左軸）
+    fig.add_trace(
+        go.Scatter(
+            x=graph_dates, y=buy_shares_list,
+            mode='lines+markers', name='個人 買残合計',
+            line=dict(color='#d32f2f', width=2),
+            hovertemplate='日付: %{x}<br>買残: %{y:,.0f}株<extra></extra>'
+        ),
+        secondary_y=False
+    )
+
+    # 3. 個人売残（青線：左軸）
+    fig.add_trace(
+        go.Scatter(
+            x=graph_dates, y=sell_shares_list,
+            mode='lines+markers', name='個人 売残合計',
+            line=dict(color='#1976d2', width=2),
+            hovertemplate='日付: %{x}<br>売残: %{y:,.0f}株<extra></extra>'
+        ),
+        secondary_y=False
+    )
+
+    # 4. 機関空売り合計（オレンジ点線：左軸）
     if any(v is not None and v > 0 for v in inst_shares_list):
-        fig.add_trace(go.Scatter(
-            x=graph_dates, y=inst_shares_list,
-            mode='lines+markers', name='機関空売り合計',
-            line=dict(color='#ff9800', width=2, dash='dot'),
-            hovertemplate='日付: %{x}<br>機関空売り: %{y:,.0f}株<extra></extra>'
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=graph_dates, y=inst_shares_list,
+                mode='lines+markers', name='機関空売り合計',
+                line=dict(color='#ff9800', width=2, dash='dot'),
+                hovertemplate='日付: %{x}<br>機関空売り: %{y:,.0f}株<extra></extra>'
+            ),
+            secondary_y=False
+        )
+
+    # 出来高の最大値に合わせて右軸の上限を調整（折れ線グラフを邪魔しないよう出来高は下半分に抑える）
+    max_vol = max(vol_list) if vol_list else 0
 
     fig.update_layout(
-        title=f"{title_label} 信用残・機関空売り推移",
-        xaxis_title="日付",
-        yaxis_title="株数",
+        title=f"{title_label} 信用残・機関空売り・出来高推移",
         hovermode="x unified",
         margin=dict(l=40, r=40, t=40, b=40),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        template="plotly_white"
+        template="plotly_white",
+        bargap=0.3
     )
+    fig.update_xaxes(title_text="日付")
+    fig.update_yaxes(title_text="信用残・機関空売り (株数)", secondary_y=False)
+    fig.update_yaxes(
+        title_text="出来高 (株数)",
+        secondary_y=True,
+        showgrid=False,
+        range=[0, max_vol * 2.5] if max_vol > 0 else [0, 1]  # 出来高を画面下部40%程度に収める
+    )
+
     st.plotly_chart(fig, use_container_width=True)
 
     # ----------------------------------------------------
