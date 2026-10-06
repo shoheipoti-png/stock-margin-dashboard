@@ -26,5 +26,7 @@ jobs:
         env:
           GCP_SERVICE_ACCOUNT_KEY: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
           SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+          SHORT_SPREADSHEET_ID: ${{ secrets.SHORT_SPREADSHEET_ID }}
         run: |
           python update_data.py
+          python update_short_data.py
