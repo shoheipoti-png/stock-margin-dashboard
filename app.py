@@ -12,6 +12,10 @@ import yfinance as yf
 st.set_page_config(page_title="株価・信用残・機関空売りダッシュボード", layout="wide")
 st.title("株価・信用残・機関空売りダッシュボード")
 
+# スプレッドシートID（直接埋め込みで確実化）
+DEFAULT_SPREADSHEET_ID = "1_YK99EVmXnTWHzE7oP9tO1jWYaxUiTinMyFQ-1n2M4g"
+DEFAULT_SHORT_SPREADSHEET_ID = "1fdfmwq_6CBAG495JJD4EPgT7EOfyB9kZ_QAWu6pAXaU"
+
 INSTITUTION_SHORT_NAMES = {
     "barclays": "Barc",
     "goldman": "GOLD",
@@ -49,26 +53,38 @@ def clean_ticker_code(val):
     return s[:4] if len(s) >= 4 else s
 
 @st.cache_data(ttl=60)
-def load_data_from_sheet(sheet_env_key):
-    """Googleスプレッドシートからデータを取得（エラー時は画面に理由を表示）"""
+def load_data_from_sheet(sheet_type="margin"):
+    """Googleスプレッドシートからデータを取得"""
     try:
-        creds_json = st.secrets.get("GCP_SERVICE_ACCOUNT_KEY") or os.environ.get("GCP_SERVICE_ACCOUNT_KEY")
-        sheet_id = st.secrets.get(sheet_env_key) or os.environ.get(sheet_env_key)
-        if not creds_json or not sheet_id:
-            st.error(f"【設定エラー】Secretsに '{sheet_env_key}' または 'GCP_SERVICE_ACCOUNT_KEY' がありません。")
+        # サービスアカウントキーの取得
+        creds_raw = st.secrets.get("GCP_SERVICE_ACCOUNT_KEY") or os.environ.get("GCP_SERVICE_ACCOUNT_KEY")
+        if not creds_raw:
+            st.error("【設定エラー】GCP_SERVICE_ACCOUNT_KEY が見つかりません。")
             return pd.DataFrame()
             
-        creds_dict = json.loads(creds_json) if isinstance(creds_json, str) else creds_json
+        if isinstance(creds_raw, dict):
+            creds_dict = creds_raw
+        elif hasattr(creds_raw, "to_dict"):
+            creds_dict = creds_raw.to_dict()
+        else:
+            creds_dict = json.loads(str(creds_raw).strip())
+
         scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
         credentials = Credentials.from_service_account_info(creds_dict, scopes=scope)
         client = gspread.authorize(credentials)
         
+        # 対象シートIDの決定
+        if sheet_type == "margin":
+            sheet_id = st.secrets.get("SPREADSHEET_ID") or DEFAULT_SPREADSHEET_ID
+        else:
+            sheet_id = st.secrets.get("SHORT_SPREADSHEET_ID") or DEFAULT_SHORT_SPREADSHEET_ID
+            
         clean_id = str(sheet_id).strip().strip('"').strip("'")
         worksheet = client.open_by_key(clean_id).sheet1
         records = worksheet.get_all_records()
         return pd.DataFrame(records)
     except Exception as e:
-        st.error(f"スプレッドシート ({sheet_env_key}) 読み込み失敗: {e}")
+        st.error(f"スプレッドシート ({sheet_type}) 読み込み失敗: {e}")
         return pd.DataFrame()
 
 @st.cache_data(ttl=3600)
@@ -77,8 +93,13 @@ def get_stock_price_history(ticker_code, days=90):
     try:
         yf_ticker = f"{ticker_code}.T"
         stock = yf.Ticker(yf_ticker)
-        info = stock.info or {}
-        comp_name = info.get("shortName") or info.get("longName") or ""
+        
+        comp_name = ""
+        try:
+            info = stock.info or {}
+            comp_name = info.get("shortName") or info.get("longName") or ""
+        except Exception:
+            pass
         
         hist = stock.history(period="1y")
         if hist.empty:
@@ -164,8 +185,8 @@ if ticker:
     cutoff_str = cutoff_date.strftime("%Y-%m-%d")
 
     # 1. データ読み込み
-    df_margin = load_data_from_sheet("SPREADSHEET_ID")
-    df_short = load_data_from_sheet("SHORT_SPREADSHEET_ID")
+    df_margin = load_data_from_sheet("margin")
+    df_short = load_data_from_sheet("short")
 
     # 株価・会社名取得 (yfinance)
     stock_prices, yf_company_name = get_stock_price_history(clean_target, selected_days)
@@ -367,7 +388,7 @@ if ticker:
         except Exception:
             date_str = d
 
-        # 株価前日比・出来高 (yfinance)
+        # 株価前日比・出来高
         price_info = stock_prices.get(d)
         if price_info:
             pct_str, pct_color = format_pct(price_info["pct"])
