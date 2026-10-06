@@ -106,8 +106,13 @@ def main():
         if not code or not re.match(r'^\d{4}$', code):
             continue
             
-        calc_date = format_date(row.iloc[1])
         name = str(row.iloc[3]).replace('\n', ' ').strip() if pd.notna(row.iloc[3]) else ""
+        
+        # 【ETF・投信の除外判定】1570（日経レバ）以外のETF・投信・受益証券はスキップ
+        if code != "1570" and any(k in name for k in ["投信", "ETF", "受益証券"]):
+            continue
+
+        calc_date = format_date(row.iloc[1])
         institution = str(row.iloc[5]).replace('\n', ' ').strip() if pd.notna(row.iloc[5]) else ""
         ratio = clean_float(row.iloc[10])
         shares = clean_int(row.iloc[11])
@@ -126,7 +131,7 @@ def main():
             prev_ratio
         ])
 
-    print(f"抽出データ件数: {len(parsed_rows)} 件")
+    print(f"抽出データ件数（ETF除外後）: {len(parsed_rows)} 件")
     if not parsed_rows:
         print("抽出可能なデータがありませんでした。")
         return
