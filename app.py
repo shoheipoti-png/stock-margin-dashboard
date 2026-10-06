@@ -12,9 +12,9 @@ import yfinance as yf
 st.set_page_config(page_title="株価・信用残・機関空売りダッシュボード", layout="wide")
 st.title("株価・信用残・機関空売りダッシュボード")
 
-# スプレッドシートID（直接埋め込みで確実化）
+# スプレッドシートID（正しいIDを直接指定）
 DEFAULT_SPREADSHEET_ID = "1_YK99EVmXnTWHzE7oP9tO1jWYaxUiTinMyFQ-1n2M4g"
-DEFAULT_SHORT_SPREADSHEET_ID = "1fdfmwq_6CBAG495JJD4EPgT7EOfyB9kZ_QAWu6pAXaU"
+DEFAULT_SHORT_SPREADSHEET_ID = "1Fdfmwq_6CBAG495JJD4EPgT7EOfyB9kZ_QAwU6pAXaU"
 
 INSTITUTION_SHORT_NAMES = {
     "barclays": "Barc",
@@ -56,7 +56,6 @@ def clean_ticker_code(val):
 def load_data_from_sheet(sheet_type="margin"):
     """Googleスプレッドシートからデータを取得"""
     try:
-        # サービスアカウントキーの取得
         creds_raw = st.secrets.get("GCP_SERVICE_ACCOUNT_KEY") or os.environ.get("GCP_SERVICE_ACCOUNT_KEY")
         if not creds_raw:
             st.error("【設定エラー】GCP_SERVICE_ACCOUNT_KEY が見つかりません。")
@@ -73,14 +72,9 @@ def load_data_from_sheet(sheet_type="margin"):
         credentials = Credentials.from_service_account_info(creds_dict, scopes=scope)
         client = gspread.authorize(credentials)
         
-        # 対象シートIDの決定
-        if sheet_type == "margin":
-            sheet_id = st.secrets.get("SPREADSHEET_ID") or DEFAULT_SPREADSHEET_ID
-        else:
-            sheet_id = st.secrets.get("SHORT_SPREADSHEET_ID") or DEFAULT_SHORT_SPREADSHEET_ID
-            
-        clean_id = str(sheet_id).strip().strip('"').strip("'")
-        worksheet = client.open_by_key(clean_id).sheet1
+        # 正しいIDを使用
+        sheet_id = DEFAULT_SPREADSHEET_ID if sheet_type == "margin" else DEFAULT_SHORT_SPREADSHEET_ID
+        worksheet = client.open_by_key(sheet_id).sheet1
         records = worksheet.get_all_records()
         return pd.DataFrame(records)
     except Exception as e:
