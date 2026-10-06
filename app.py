@@ -352,4 +352,34 @@ if ticker:
         inst_summary_html = f"""
         <div style="margin-bottom: 12px; font-family: sans-serif;">
             <div style="background-color: #000; color: #fff; padding: 6px 12px; font-weight: bold; font-size: 13px;">
-                {ticker} 空売り参加機関一覧 ({len(institutions)}社
+                {ticker} 空売り参加機関一覧 ({len(institutions)}社)
+            </div>
+            <table style="width: 100%; border-collapse: collapse; font-size: 12px; border: 1px solid #ddd;">
+                <tr style="background-color: #f5f5f5;">
+                    <th style="padding: 4px 8px; border: 1px solid #ddd; width: 60px; text-align: center;">Number</th>
+                    <th style="padding: 4px 8px; border: 1px solid #ddd; text-align: left;">空売り機関名</th>
+                </tr>
+        """
+        for idx, inst in enumerate(institutions, 1):
+            inst_summary_html += f"""
+                <tr>
+                    <td style="padding: 4px 8px; border: 1px solid #ddd; text-align: center;">{idx}</td>
+                    <td style="padding: 4px 8px; border: 1px solid #ddd;">{inst}</td>
+                </tr>
+            """
+        inst_summary_html += "</table></div>"
+        components.html(inst_summary_html, height=min(180, 40 + inst_count * 28), scrolling=True)
+
+    html_table = f"""
+    <table style="width:100%; border-collapse: collapse; font-family: sans-serif; font-size: 13px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+        <thead>
+            {header_tr1}
+            {header_tr2}
+        </thead>
+        <tbody>
+            {"".join(rows_html)}
+        </tbody>
+    </table>
+    """
+    
+    components.html(html_table, height=750, scrolling=True)
