@@ -43,40 +43,46 @@ def get_short_inst_name(full_name):
     return str(full_name)[:6]
 
 def clean_ticker_code(val):
-    if pd.isna(val):
+    if pd.isna(val) or val is None:
         return ""
     s = str(val).split('.')[0].strip()
     return s[:4] if len(s) >= 4 else s
 
 @st.cache_data(ttl=60)
 def load_data_from_sheet(sheet_env_key):
-    """Googleスプレッドシートからデータを取得"""
+    """Googleスプレッドシートからデータを取得（エラー時は画面に理由を表示）"""
     try:
         creds_json = st.secrets.get("GCP_SERVICE_ACCOUNT_KEY") or os.environ.get("GCP_SERVICE_ACCOUNT_KEY")
         sheet_id = st.secrets.get(sheet_env_key) or os.environ.get(sheet_env_key)
         if not creds_json or not sheet_id:
+            st.error(f"【設定エラー】Secretsに '{sheet_env_key}' または 'GCP_SERVICE_ACCOUNT_KEY' がありません。")
             return pd.DataFrame()
             
-        creds_dict = json.loads(creds_json)
+        creds_dict = json.loads(creds_json) if isinstance(creds_json, str) else creds_json
         scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
         credentials = Credentials.from_service_account_info(creds_dict, scopes=scope)
         client = gspread.authorize(credentials)
-        worksheet = client.open_by_key(sheet_id).sheet1
+        
+        clean_id = str(sheet_id).strip().strip('"').strip("'")
+        worksheet = client.open_by_key(clean_id).sheet1
         records = worksheet.get_all_records()
         return pd.DataFrame(records)
-    except Exception:
+    except Exception as e:
+        st.error(f"スプレッドシート ({sheet_env_key}) 読み込み失敗: {e}")
         return pd.DataFrame()
 
 @st.cache_data(ttl=3600)
 def get_stock_price_history(ticker_code, days=90):
-    """yfinanceから株価の前日比%と出来高を取得"""
+    """yfinanceから株価・出来高・会社名を取得"""
     try:
         yf_ticker = f"{ticker_code}.T"
         stock = yf.Ticker(yf_ticker)
-        # 指定日数より少し多めに取得して前日比を計算
+        info = stock.info or {}
+        comp_name = info.get("shortName") or info.get("longName") or ""
+        
         hist = stock.history(period="1y")
         if hist.empty:
-            return {}
+            return {}, comp_name
         
         hist = hist.sort_index(ascending=True)
         hist['Pct_Change'] = hist['Close'].pct_change() * 100
@@ -90,9 +96,9 @@ def get_stock_price_history(ticker_code, days=90):
                 "pct": pct if pd.notna(pct) else 0.0,
                 "volume": vol if pd.notna(vol) else 0
             }
-        return price_dict
+        return price_dict, comp_name
     except Exception:
-        return {}
+        return {}, ""
 
 def smart_format(val):
     try:
@@ -109,7 +115,7 @@ def smart_format(val):
         return str(val)
 
 def format_change(num):
-    """数値から前日比のプラスマイナス・色・背景色を生成"""
+    """前日比のプラスマイナス・色・背景色"""
     try:
         if num == "" or num is None or num == "-":
             return "-", "#666", "transparent"
@@ -130,7 +136,7 @@ def format_change(num):
         return str(num), "#666", "#f0f2f6"
 
 def format_pct(num):
-    """株価前日比％のフォーマット"""
+    """株価前日比％"""
     try:
         val = float(num)
         if val == 0:
@@ -144,6 +150,8 @@ def format_pct(num):
 ticker = st.text_input("銘柄コード（4桁）を入力してください", value="6315")
 
 if ticker:
+    clean_target = clean_ticker_code(ticker)
+    
     period_option = st.selectbox(
         "表示期間を選択：",
         ["直近1ヶ月", "直近3ヶ月", "直半年", "1年"],
@@ -159,13 +167,15 @@ if ticker:
     df_margin = load_data_from_sheet("SPREADSHEET_ID")
     df_short = load_data_from_sheet("SHORT_SPREADSHEET_ID")
 
-    # 2. 個人信用データの抽出
+    # 株価・会社名取得 (yfinance)
+    stock_prices, yf_company_name = get_stock_price_history(clean_target, selected_days)
+
     company_name = ""
+
+    # 2. 個人信用データの抽出
     if not df_margin.empty and "銘柄コード" in df_margin.columns:
         df_margin['clean_code'] = df_margin['銘柄コード'].apply(clean_ticker_code)
-        m_filtered = df_margin[df_margin['clean_code'] == str(ticker)].copy()
-        if not m_filtered.empty and "銘柄名" in m_filtered.columns:
-            company_name = str(m_filtered["銘柄名"].iloc[0]).split()[0]
+        m_filtered = df_margin[df_margin['clean_code'] == clean_target].copy()
         if "日付" in m_filtered.columns:
             m_filtered = m_filtered[m_filtered["日付"] >= cutoff_str]
     else:
@@ -174,20 +184,21 @@ if ticker:
     # 3. 機関空売りデータの抽出
     if not df_short.empty and "銘柄コード" in df_short.columns:
         df_short['clean_code'] = df_short['銘柄コード'].apply(clean_ticker_code)
-        s_filtered = df_short[df_short['clean_code'] == str(ticker)].copy()
-        if not company_name and not s_filtered.empty and "銘柄名" in s_filtered.columns:
-            company_name = str(s_filtered["銘柄名"].iloc[0]).split()[0]
+        s_filtered = df_short[df_short['clean_code'] == clean_target].copy()
+        if not s_filtered.empty and "銘柄名" in s_filtered.columns:
+            raw_n = str(s_filtered["銘柄名"].iloc[0]).split()[0]
+            company_name = raw_n.replace("普通株式", "").strip()
         date_col = "計算年月日" if "計算年月日" in s_filtered.columns else "公表日"
         if date_col in s_filtered.columns:
             s_filtered = s_filtered[s_filtered[date_col] >= cutoff_str]
     else:
         s_filtered = pd.DataFrame()
 
-    title_label = f"{ticker}（{company_name}）" if company_name else f"{ticker}"
-    st.subheader(f"{title_label} のデータ分析")
+    if not company_name and yf_company_name:
+        company_name = yf_company_name.split()[0]
 
-    # 株価・出来高データの取得 (yfinance)
-    stock_prices = get_stock_price_history(ticker, selected_days)
+    title_label = f"{clean_target}（{company_name}）" if company_name else clean_target
+    st.subheader(f"{title_label} のデータ分析")
 
     # 日付軸の決定（降順）
     all_dates = set()
@@ -231,7 +242,7 @@ if ticker:
                 daily_total += shares
             total_short_by_date[d_str] = daily_total
 
-    # 個人信用マップの構築（日付順ソートして前日差を自動計算）
+    # 個人信用マップの構築
     margin_map = {}
     if not m_filtered.empty and "日付" in m_filtered.columns:
         m_sorted = m_filtered.sort_values(by="日付", ascending=True)
@@ -349,7 +360,6 @@ if ticker:
     )
 
     rows_html = []
-    # 日付降順でループし、前日差は次の日（過去）との比較で計算
     for i, d in enumerate(sorted_dates):
         try:
             dt = datetime.datetime.strptime(d, "%Y-%m-%d")
@@ -389,7 +399,6 @@ if ticker:
                 inst_tds += '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 6px; background-color: #fff; color: #888;">-</td>'
 
         # 全増減
-        # 過去日（i+1）の合計との差分
         prev_d = sorted_dates[i+1] if i + 1 < len(sorted_dates) else None
         prev_sum = total_short_by_date.get(prev_d, 0) if prev_d else 0
         cur_sum = total_short_by_date.get(d, 0)
@@ -401,7 +410,7 @@ if ticker:
         else:
             all_change_html = '<div style="color: #666;">-</div>'
 
-        # 個人信用の取得（自動計算された差分を表示）
+        # 個人信用の取得
         m_info = margin_map.get(d)
         if m_info is not None:
             r = m_info["row"]
