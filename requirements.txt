@@ -11,3 +11,4 @@ google-auth
 pdfplumber
 requests
 beautifulsoup4
+xlrd
