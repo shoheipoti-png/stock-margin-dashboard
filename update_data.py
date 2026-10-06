@@ -29,7 +29,7 @@ def clean_val(text):
     return v if v not in ['-', '*', ''] else "0"
 
 def main():
-    print("JPX個人信用データ取得（デバッグ版）を開始します...")
+    print("JPX個人信用データ取得（重複スキップ機能付き）を開始します...")
     creds_json = os.environ.get("GCP_SERVICE_ACCOUNT_KEY")
     sheet_id = os.environ.get("SPREADSHEET_ID")
     
@@ -43,12 +43,6 @@ def main():
     client = gspread.authorize(credentials)
     worksheet = client.open_by_key(sheet_id).sheet1
     
-    # --- 【確認用デバッグ出力】 ---
-    print(f"★ 接続成功したスプレッドシートのタイトル: {client.open_by_key(sheet_id).title}")
-    print(f"★ 接続成功したワークシート名: {worksheet.title}")
-    print(f"★ 使用しているスプレッドシートID: {sheet_id}")
-    # ----------------------------
-
     pdf_url = get_latest_pdf_url()
     if not pdf_url:
         print("エラー: PDF URLが取得できませんでした。")
@@ -59,10 +53,9 @@ def main():
     pdf_file = io.BytesIO(pdf_res.content)
     
     report_date = None
-    new_rows = []
     
+    # 1. 1ページ目から正式な「申込み現在日」を正確に抽出
     with pdfplumber.open(pdf_file) as pdf:
-        # 1. 1ページ目から正式な「申込み現在日」を正確に抽出
         p0_text = pdf.pages[0].extract_text()
         date_match = re.search(r'(\d{4})/(\d{1,2})/(\d{1,2})\s*申込み現在', p0_text)
         if date_match:
@@ -72,7 +65,25 @@ def main():
             report_date = datetime.date.today().strftime("%Y-%m-%d")
             print(f"警告: 基準日が見つからないため当日日付を代用: {report_date}")
 
-        # 2. 全ページの「Shs.」行から座標バケットに基づいて全データを正確に抽出
+    # 2. 【重複スキップ判定】すでにスプレッドシートに同じ日付のデータが存在するか確認
+    existing_data = worksheet.get_all_values()
+    headers = ["日付", "銘柄コード", "売残(合計)", "売残(一般)", "売残(制度)", "買残(合計)", "買残(一般)", "買残(制度)"]
+    data_rows = []
+    
+    if existing_data and len(existing_data[0]) > 0 and existing_data[0][0] == "日付" and len(existing_data[0]) == len(headers):
+        data_rows = existing_data[1:]
+    
+    # すでに同日のデータがシート内に存在するかチェック
+    dates_in_sheet = {row[0] for row in data_rows if len(row) > 0}
+    if report_date in dates_in_sheet:
+        print(f"【スキップ】基準日 '{report_date}' のデータはすでにスプレッドシートに存在するため、更新を終了します。")
+        return
+
+    print(f"新着データを確認しました。解析と更新処理を開始します...")
+    
+    # 3. 全ページの「Shs.」行から座標バケットに基づいて全データを正確に抽出
+    new_rows = []
+    with pdfplumber.open(pdf_file) as pdf:
         for page_idx, page in enumerate(pdf.pages):
             words = page.extract_words()
             if not words:
@@ -130,15 +141,7 @@ def main():
         unique_rows[r[1]] = r
     final_rows = list(unique_rows.values())
 
-    existing_data = worksheet.get_all_values()
-    headers = ["日付", "銘柄コード", "売残(合計)", "売残(一般)", "売残(制度)", "買残(合計)", "買残(一般)", "買残(制度)"]
-    data_rows = []
-    
-    if existing_data and len(existing_data[0]) > 0 and existing_data[0][0] == "日付" and len(existing_data[0]) == len(headers):
-        data_rows = existing_data[1:]
-    
-    data_rows = [row for row in data_rows if len(row) > 0 and row[0] != report_date]
-    
+    # 4. 450日ローリングを適用してスプレッドシートを更新
     cutoff_date = datetime.datetime.now() - datetime.timedelta(days=450)
     cutoff_date_str = cutoff_date.strftime("%Y-%m-%d")
     filtered_rows = [row for row in data_rows if len(row) > 0 and row[0] >= cutoff_date_str]
