@@ -195,7 +195,11 @@ if ticker:
         df_margin['clean_code'] = df_margin['銘柄コード'].apply(clean_ticker_code)
         m_filtered = df_margin[df_margin['clean_code'] == clean_target].copy()
         if "銘柄名" in m_filtered.columns and not m_filtered.empty:
-            company_name = str(m_filtered["銘柄名"].iloc[0]).split()[0]
+            val_name = str(m_filtered["銘柄名"].iloc[0]).strip()
+            if val_name:
+                parts = val_name.split()
+                if parts:
+                    company_name = parts[0]
         if "日付" in m_filtered.columns:
             m_filtered = m_filtered[m_filtered["日付"] >= cutoff_str]
     else:
@@ -206,8 +210,11 @@ if ticker:
         df_short['clean_code'] = df_short['銘柄コード'].apply(clean_ticker_code)
         s_filtered = df_short[df_short['clean_code'] == clean_target].copy()
         if not company_name and not s_filtered.empty and "銘柄名" in s_filtered.columns:
-            raw_n = str(s_filtered["銘柄名"].iloc[0]).split()[0]
-            company_name = raw_n.replace("普通株式", "").strip()
+            raw_val = str(s_filtered["銘柄名"].iloc[0]).strip()
+            if raw_val:
+                parts = raw_val.split()
+                if parts:
+                    company_name = parts[0].replace("普通株式", "").strip()
         date_col = "計算年月日" if "計算年月日" in s_filtered.columns else "公表日"
         if date_col in s_filtered.columns:
             s_filtered = s_filtered[s_filtered[date_col] >= cutoff_str]
@@ -216,7 +223,9 @@ if ticker:
 
     # yfinance名からのフォールバック
     if not company_name and yf_company_name:
-        company_name = yf_company_name.split()[0]
+        parts = yf_company_name.split()
+        if parts:
+            company_name = parts[0]
 
     title_label = f"{clean_target}（{company_name}）" if company_name else clean_target
     st.subheader(f"{title_label} のデータ分析")
@@ -228,7 +237,6 @@ if ticker:
     if not s_filtered.empty:
         date_col = "計算年月日" if "計算年月日" in s_filtered.columns else "公表日"
         all_dates.update(s_filtered[date_col].dropna().astype(str).tolist())
-    # 株価データがある日付も軸に追加
     if stock_prices:
         all_dates.update([d for d in stock_prices.keys() if d >= cutoff_str])
 
@@ -325,7 +333,6 @@ if ticker:
         tot_inst = total_short_by_date.get(d, None)
         inst_shares_list.append(tot_inst)
 
-        # 出来高と前日比カラー判定（プラス：赤系半透明、マイナス：青系半透明）
         p_info = stock_prices.get(d)
         if p_info:
             vol = p_info["volume"]
@@ -388,7 +395,6 @@ if ticker:
             secondary_y=False
         )
 
-    # 出来高が折れ線グラフの邪魔にならないよう、右軸の上限を2.5倍にして画面下部40%に抑える
     max_vol = max(vol_list) if vol_list else 0
 
     fig.update_layout(
