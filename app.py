@@ -10,7 +10,6 @@ import gspread
 from google.oauth2.service_account import Credentials
 import streamlit.components.v1 as components
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import yfinance as yf
 
 st.set_page_config(page_title="株価・信用残・機関空売りダッシュボード", layout="wide")
@@ -82,14 +81,11 @@ def get_company_name_from_yahoo_japan(ticker_code):
         res = requests.get(url, headers=headers, timeout=5)
         if res.status_code == 200:
             soup = BeautifulSoup(res.text, 'html.parser')
-            # <title>タグ（例: "キオクシアホールディングス(株)【285A】：株価・株式情報 - Yahoo!ファイナンス"）
             title_text = soup.title.string if soup.title else ""
             if "【" in title_text:
                 raw_name = title_text.split("【")[0].strip()
-                # 余計な装飾をカット
                 name = raw_name.replace("(株)", "").replace("（株）", "").replace("ホールディングス", "HD").strip()
                 return name
-            # h1タグ等からのバックアップ
             h1 = soup.find('h1')
             if h1:
                 return h1.text.split("【")[0].replace("(株)", "").replace("（株）", "").replace("ホールディングス", "HD").strip()
@@ -173,7 +169,6 @@ if ticker:
     df_margin = load_data_from_sheet("margin")
     df_short = load_data_from_sheet("short")
     
-    # 銘柄名と株価履歴の取得
     company_name = get_company_name_from_yahoo_japan(clean_target)
     stock_prices = get_stock_prices(clean_target)
 
@@ -199,7 +194,7 @@ if ticker:
     title_label = f"{clean_target}（{company_name}）" if company_name else clean_target
     st.subheader(f"{title_label} のデータ分析")
 
-    # 日付軸の決定（信用・機関データが存在する日付、または直近営業日）
+    # 日付軸の決定
     all_dates = set()
     if not m_filtered.empty and "日付" in m_filtered.columns:
         all_dates.update(m_filtered["日付"].dropna().astype(str).tolist())
@@ -257,7 +252,7 @@ if ticker:
             margin_map[d_str] = {"row": r, "sell_diff": sell_diff, "buy_diff": buy_diff}
 
     # ----------------------------------------------------
-    # グラフ描画（1画面・2軸、日付を完全同期）
+    # グラフ描画（単一縦軸：信用残・空売り・出来高すべて同スケール）
     # ----------------------------------------------------
     graph_dates = sorted(sorted_dates)
     buy_shares_list = []
@@ -280,55 +275,52 @@ if ticker:
         sell_shares_list.append(s_val)
         inst_shares_list.append(total_short_by_date.get(d, None))
 
-        # 出来高と前日比カラー
+        # 出来高と前日比カラー判定
         p_info = stock_prices.get(d)
         if p_info:
             vol = p_info["volume"]
             pct = p_info["pct"]
             vol_list.append(vol)
-            if pct > 0: vol_colors.append("rgba(239, 83, 80, 0.40)")     # 赤（プラス）
-            elif pct < 0: vol_colors.append("rgba(66, 165, 245, 0.40)")  # 青（マイナス）
-            else: vol_colors.append("rgba(189, 189, 189, 0.40)")
+            if pct > 0: vol_colors.append("rgba(239, 83, 80, 0.45)")     # 赤（前日比プラス）
+            elif pct < 0: vol_colors.append("rgba(66, 165, 245, 0.45)")  # 青（前日比マイナス）
+            else: vol_colors.append("rgba(189, 189, 189, 0.45)")
         else:
             vol_list.append(0)
             vol_colors.append("rgba(189, 189, 189, 0.30)")
 
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig = go.Figure()
 
-    # 出来高棒グラフ（1日1本、カテゴリー軸で均等配置）
+    # 1. 出来高（棒グラフ：同じ株数軸）
     fig.add_trace(
         go.Bar(
             x=graph_dates, y=vol_list,
             name='出来高',
             marker=dict(color=vol_colors),
             hovertemplate='日付: %{x}<br>出来高: %{y:,.0f}株<extra></extra>'
-        ),
-        secondary_y=True
+        )
     )
 
-    # 個人買残（赤）
+    # 2. 個人買残（赤線：同じ株数軸）
     fig.add_trace(
         go.Scatter(
             x=graph_dates, y=buy_shares_list,
             mode='lines+markers', name='個人 買残合計',
             line=dict(color='#d32f2f', width=2),
             hovertemplate='日付: %{x}<br>買残: %{y:,.0f}株<extra></extra>'
-        ),
-        secondary_y=False
+        )
     )
 
-    # 個人売残（青）
+    # 3. 個人売残（青線：同じ株数軸）
     fig.add_trace(
         go.Scatter(
             x=graph_dates, y=sell_shares_list,
             mode='lines+markers', name='個人 売残合計',
             line=dict(color='#1976d2', width=2),
             hovertemplate='日付: %{x}<br>売残: %{y:,.0f}株<extra></extra>'
-        ),
-        secondary_y=False
+        )
     )
 
-    # 機関空売り合計（オレンジ点線）
+    # 4. 機関空売り合計（オレンジ点線：同じ株数軸）
     if any(v is not None and v > 0 for v in inst_shares_list):
         fig.add_trace(
             go.Scatter(
@@ -336,28 +328,20 @@ if ticker:
                 mode='lines+markers', name='機関空売り合計',
                 line=dict(color='#ff9800', width=2, dash='dot'),
                 hovertemplate='日付: %{x}<br>機関空売り: %{y:,.0f}株<extra></extra>'
-            ),
-            secondary_y=False
+            )
         )
 
-    max_vol = max(vol_list) if vol_list else 0
-
     fig.update_layout(
-        title=f"{title_label} 信用残・機関空売り・出来高推移",
+        title=f"{title_label} 信用残・機関空売り・出来高推移（同一株数軸）",
         hovermode="x unified",
         margin=dict(l=40, r=40, t=50, b=30),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         template="plotly_white",
-        bargap=0.3
+        bargap=0.35
     )
+    # 営業日のみカテゴリー配置・縦軸は共通「株数」1本
     fig.update_xaxes(type='category', title_text="日付")
-    fig.update_yaxes(title_text="信用残・機関空売り (株数)", secondary_y=False)
-    fig.update_yaxes(
-        title_text="出来高 (株数)",
-        secondary_y=True,
-        showgrid=False,
-        range=[0, max_vol * 2.5] if max_vol > 0 else [0, 1]
-    )
+    fig.update_yaxes(title_text="株数（出来高 / 信用残）")
 
     st.plotly_chart(fig, use_container_width=True)
 
