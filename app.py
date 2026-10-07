@@ -3,6 +3,7 @@ import pandas as pd
 import datetime
 import os
 import json
+import re
 import gspread
 from google.oauth2.service_account import Credentials
 import streamlit.components.v1 as components
@@ -48,9 +49,10 @@ def get_short_inst_name(full_name):
     return str(full_name)[:6]
 
 def clean_ticker_code(val):
+    """数字4桁および英字入りコード（285Aなど）を正しく正規化"""
     if pd.isna(val) or val is None:
         return ""
-    s = str(val).split('.')[0].strip()
+    s = str(val).split('.')[0].strip().upper()
     return s[:4] if len(s) >= 4 else s
 
 @st.cache_data(ttl=60)
@@ -82,10 +84,11 @@ def load_data_from_sheet(sheet_type="margin"):
         return pd.DataFrame()
 
 @st.cache_data(ttl=3600)
-def get_stock_price_history(ticker_code, days=90):
+def get_stock_price_history(ticker_code):
     """yfinanceから株価・出来高・会社名を取得"""
     try:
-        yf_ticker = f"{ticker_code}.T"
+        clean_code = str(ticker_code).strip().upper()
+        yf_ticker = f"{clean_code}.T"
         stock = yf.Ticker(yf_ticker)
         
         comp_name = ""
@@ -183,7 +186,7 @@ if ticker:
     df_short = load_data_from_sheet("short")
 
     # 株価・会社名取得 (yfinance)
-    stock_prices, yf_company_name = get_stock_price_history(clean_target, selected_days)
+    stock_prices, yf_company_name = get_stock_price_history(clean_target)
 
     company_name = ""
 
@@ -191,6 +194,8 @@ if ticker:
     if not df_margin.empty and "銘柄コード" in df_margin.columns:
         df_margin['clean_code'] = df_margin['銘柄コード'].apply(clean_ticker_code)
         m_filtered = df_margin[df_margin['clean_code'] == clean_target].copy()
+        if "銘柄名" in m_filtered.columns and not m_filtered.empty:
+            company_name = str(m_filtered["銘柄名"].iloc[0]).split()[0]
         if "日付" in m_filtered.columns:
             m_filtered = m_filtered[m_filtered["日付"] >= cutoff_str]
     else:
@@ -200,7 +205,7 @@ if ticker:
     if not df_short.empty and "銘柄コード" in df_short.columns:
         df_short['clean_code'] = df_short['銘柄コード'].apply(clean_ticker_code)
         s_filtered = df_short[df_short['clean_code'] == clean_target].copy()
-        if not s_filtered.empty and "銘柄名" in s_filtered.columns:
+        if not company_name and not s_filtered.empty and "銘柄名" in s_filtered.columns:
             raw_n = str(s_filtered["銘柄名"].iloc[0]).split()[0]
             company_name = raw_n.replace("普通株式", "").strip()
         date_col = "計算年月日" if "計算年月日" in s_filtered.columns else "公表日"
@@ -209,6 +214,7 @@ if ticker:
     else:
         s_filtered = pd.DataFrame()
 
+    # yfinance名からのフォールバック
     if not company_name and yf_company_name:
         company_name = yf_company_name.split()[0]
 
@@ -222,6 +228,9 @@ if ticker:
     if not s_filtered.empty:
         date_col = "計算年月日" if "計算年月日" in s_filtered.columns else "公表日"
         all_dates.update(s_filtered[date_col].dropna().astype(str).tolist())
+    # 株価データがある日付も軸に追加
+    if stock_prices:
+        all_dates.update([d for d in stock_prices.keys() if d >= cutoff_str])
 
     if not all_dates:
         base_dates = [datetime.date.today() - datetime.timedelta(days=i) for i in range(min(selected_days, 15))]
@@ -286,13 +295,14 @@ if ticker:
             }
 
     # ----------------------------------------------------
-    # グラフ描画 (上下2段レイアウト：上段に残高折れ線、下段に出来高棒グラフ)
+    # グラフ描画 (1画面・2軸：前日比色分け出来高棒グラフ + 残高折れ線)
     # ----------------------------------------------------
     graph_dates = sorted(sorted_dates)
     buy_shares_list = []
     sell_shares_list = []
     inst_shares_list = []
     vol_list = []
+    vol_colors = []
 
     for d in graph_dates:
         m_info = margin_map.get(d)
@@ -315,19 +325,36 @@ if ticker:
         tot_inst = total_short_by_date.get(d, None)
         inst_shares_list.append(tot_inst)
 
+        # 出来高と前日比カラー判定（プラス：赤系半透明、マイナス：青系半透明）
         p_info = stock_prices.get(d)
-        vol_list.append(p_info["volume"] if p_info else 0)
+        if p_info:
+            vol = p_info["volume"]
+            pct = p_info["pct"]
+            vol_list.append(vol)
+            if pct > 0:
+                vol_colors.append("rgba(239, 83, 80, 0.40)")   # 前日比プラス：薄い赤
+            elif pct < 0:
+                vol_colors.append("rgba(66, 165, 245, 0.40)")   # 前日比マイナス：薄い青
+            else:
+                vol_colors.append("rgba(189, 189, 189, 0.40)")  # 変わらず：薄いグレー
+        else:
+            vol_list.append(0)
+            vol_colors.append("rgba(189, 189, 189, 0.30)")
 
-    # 2段サブプロット作成（上段：row=1, 下段：row=2）
-    fig = make_subplots(
-        rows=2, cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.08,
-        row_heights=[0.7, 0.3],
-        subplot_titles=(f"{title_label} 信用残・機関空売り推移", "出来高")
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+    # 1. 出来高（棒グラフ：右軸、前日比で赤・青に色分け）
+    fig.add_trace(
+        go.Bar(
+            x=graph_dates, y=vol_list,
+            name='出来高',
+            marker=dict(color=vol_colors),
+            hovertemplate='日付: %{x}<br>出来高: %{y:,.0f}株<extra></extra>'
+        ),
+        secondary_y=True
     )
 
-    # 上段：個人買残（赤）
+    # 2. 個人買残（赤線：左軸）
     fig.add_trace(
         go.Scatter(
             x=graph_dates, y=buy_shares_list,
@@ -335,10 +362,10 @@ if ticker:
             line=dict(color='#d32f2f', width=2),
             hovertemplate='日付: %{x}<br>買残: %{y:,.0f}株<extra></extra>'
         ),
-        row=1, col=1
+        secondary_y=False
     )
 
-    # 上段：個人売残（青）
+    # 3. 個人売残（青線：左軸）
     fig.add_trace(
         go.Scatter(
             x=graph_dates, y=sell_shares_list,
@@ -346,10 +373,10 @@ if ticker:
             line=dict(color='#1976d2', width=2),
             hovertemplate='日付: %{x}<br>売残: %{y:,.0f}株<extra></extra>'
         ),
-        row=1, col=1
+        secondary_y=False
     )
 
-    # 上段：機関空売り合計（オレンジ点線）
+    # 4. 機関空売り合計（オレンジ点線：左軸）
     if any(v is not None and v > 0 for v in inst_shares_list):
         fig.add_trace(
             go.Scatter(
@@ -358,30 +385,28 @@ if ticker:
                 line=dict(color='#ff9800', width=2, dash='dot'),
                 hovertemplate='日付: %{x}<br>機関空売り: %{y:,.0f}株<extra></extra>'
             ),
-            row=1, col=1
+            secondary_y=False
         )
 
-    # 下段：出来高棒グラフ（落ち着いたスレートブルー）
-    fig.add_trace(
-        go.Bar(
-            x=graph_dates, y=vol_list,
-            name='出来高',
-            marker=dict(color='#78909c'),
-            hovertemplate='日付: %{x}<br>出来高: %{y:,.0f}株<extra></extra>'
-        ),
-        row=2, col=1
-    )
+    # 出来高が折れ線グラフの邪魔にならないよう、右軸の上限を2.5倍にして画面下部40%に抑える
+    max_vol = max(vol_list) if vol_list else 0
 
     fig.update_layout(
-        height=580,
+        title=f"{title_label} 信用残・機関空売り・出来高推移",
         hovermode="x unified",
         margin=dict(l=40, r=40, t=50, b=30),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         template="plotly_white",
-        bargap=0.35
+        bargap=0.3
     )
-    fig.update_yaxes(title_text="株数", row=1, col=1)
-    fig.update_yaxes(title_text="出来高", row=2, col=1)
+    fig.update_xaxes(title_text="日付")
+    fig.update_yaxes(title_text="信用残・機関空売り (株数)", secondary_y=False)
+    fig.update_yaxes(
+        title_text="出来高 (株数)",
+        secondary_y=True,
+        showgrid=False,
+        range=[0, max_vol * 2.5] if max_vol > 0 else [0, 1]
+    )
 
     st.plotly_chart(fig, use_container_width=True)
 
