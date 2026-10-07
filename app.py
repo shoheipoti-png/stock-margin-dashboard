@@ -4,6 +4,8 @@ import datetime
 import os
 import json
 import re
+import requests
+from bs4 import BeautifulSoup
 import gspread
 from google.oauth2.service_account import Credentials
 import streamlit.components.v1 as components
@@ -69,22 +71,39 @@ def load_data_from_sheet(sheet_type="margin"):
         return pd.DataFrame()
 
 @st.cache_data(ttl=86400)
-def get_company_name_and_prices(ticker_code):
-    """社名と株価履歴を取得"""
+def get_company_name_from_yahoo_japan(ticker_code):
+    """Yahoo!ファイナンス（日本）から銘柄名を確実に取得"""
     clean_code = str(ticker_code).strip().upper()
-    comp_name = ""
+    url = f"https://finance.yahoo.co.jp/quote/{clean_code}.T"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    try:
+        res = requests.get(url, headers=headers, timeout=5)
+        if res.status_code == 200:
+            soup = BeautifulSoup(res.text, 'html.parser')
+            # <title>タグ（例: "キオクシアホールディングス(株)【285A】：株価・株式情報 - Yahoo!ファイナンス"）
+            title_text = soup.title.string if soup.title else ""
+            if "【" in title_text:
+                raw_name = title_text.split("【")[0].strip()
+                # 余計な装飾をカット
+                name = raw_name.replace("(株)", "").replace("（株）", "").replace("ホールディングス", "HD").strip()
+                return name
+            # h1タグ等からのバックアップ
+            h1 = soup.find('h1')
+            if h1:
+                return h1.text.split("【")[0].replace("(株)", "").replace("（株）", "").replace("ホールディングス", "HD").strip()
+    except Exception:
+        pass
+    return ""
+
+@st.cache_data(ttl=3600)
+def get_stock_prices(ticker_code):
+    """yfinanceから株価履歴を取得"""
+    clean_code = str(ticker_code).strip().upper()
     prices = {}
     try:
         stock = yf.Ticker(f"{clean_code}.T")
-        # 社名取得
-        try:
-            info = stock.info or {}
-            comp_name = info.get("shortName") or info.get("longName") or ""
-            # 不要な英語表記や「(株)」をカット
-            comp_name = comp_name.split()[0].replace("(株)", "").replace("ホールディングス", "HD")
-        except:
-            pass
-        
         hist = stock.history(period="1y")
         if not hist.empty:
             hist = hist.sort_index(ascending=True)
@@ -95,9 +114,9 @@ def get_company_name_and_prices(ticker_code):
                     "pct": row['Pct'] if pd.notna(row['Pct']) else 0.0,
                     "volume": int(row['Volume']) if pd.notna(row['Volume']) else 0
                 }
-    except:
+    except Exception:
         pass
-    return comp_name, prices
+    return prices
 
 def smart_format(val):
     try:
@@ -134,7 +153,7 @@ def format_pct(num):
     except:
         return "-", "#666"
 
-ticker = st.text_input("銘柄コード（4桁）を入力してください", value="6315")
+ticker = st.text_input("銘柄コード（4桁）を入力してください", value="285A")
 
 if ticker:
     clean_target = clean_ticker_code(ticker)
@@ -150,9 +169,13 @@ if ticker:
     cutoff_date = datetime.date.today() - datetime.timedelta(days=selected_days)
     cutoff_str = cutoff_date.strftime("%Y-%m-%d")
 
+    # データ読み込み
     df_margin = load_data_from_sheet("margin")
     df_short = load_data_from_sheet("short")
-    company_name, stock_prices = get_company_name_and_prices(clean_target)
+    
+    # 銘柄名と株価履歴の取得
+    company_name = get_company_name_from_yahoo_japan(clean_target)
+    stock_prices = get_stock_prices(clean_target)
 
     # 個人信用データの抽出
     if not df_margin.empty and "銘柄コード" in df_margin.columns:
@@ -176,7 +199,7 @@ if ticker:
     title_label = f"{clean_target}（{company_name}）" if company_name else clean_target
     st.subheader(f"{title_label} のデータ分析")
 
-    # 日付軸の決定（信用・機関データが存在する日付、または直近の営業日）
+    # 日付軸の決定（信用・機関データが存在する日付、または直近営業日）
     all_dates = set()
     if not m_filtered.empty and "日付" in m_filtered.columns:
         all_dates.update(m_filtered["日付"].dropna().astype(str).tolist())
@@ -185,7 +208,6 @@ if ticker:
         all_dates.update(s_filtered[date_col].dropna().astype(str).tolist())
 
     if not all_dates:
-        # データがない場合は直近10営業日
         base_dates = [datetime.date.today() - datetime.timedelta(days=i) for i in range(15)]
         sorted_dates = [d.strftime("%Y-%m-%d") for d in base_dates if d.weekday() < 5][:10]
     else:
@@ -328,7 +350,6 @@ if ticker:
         template="plotly_white",
         bargap=0.3
     )
-    # 日付軸をカテゴリー（営業日のみ）に固定し、余分な日付スキップを防ぐ
     fig.update_xaxes(type='category', title_text="日付")
     fig.update_yaxes(title_text="信用残・機関空売り (株数)", secondary_y=False)
     fig.update_yaxes(
