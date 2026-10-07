@@ -29,7 +29,7 @@ def clean_val(text):
     return v if v not in ['-', '*', ''] else "0"
 
 def main():
-    print("JPX個人信用データ取得（英字コード・銘柄名対応版）を開始します...")
+    print("JPX個人信用データ取得（軽量8列・ETF除外・英字コード対応版）を開始します...")
     creds_json = os.environ.get("GCP_SERVICE_ACCOUNT_KEY")
     sheet_id = os.environ.get("SPREADSHEET_ID")
     
@@ -54,39 +54,37 @@ def main():
     
     report_date = None
     
-    # 1. 1ページ目から正式な「申込み現在日」を抽出
+    # 1. 1ページ目から基準日を取得
     with pdfplumber.open(pdf_file) as pdf:
         p0_text = pdf.pages[0].extract_text()
         date_match = re.search(r'(\d{4})/(\d{1,2})/(\d{1,2})\s*申込み現在', p0_text)
         if date_match:
             report_date = f"{date_match.group(1)}-{int(date_match.group(2)):02d}-{int(date_match.group(3)):02d}"
-            print(f"★ 抽出された基準日: {report_date}")
+            print(f"★ 基準日: {report_date}")
         else:
             report_date = datetime.date.today().strftime("%Y-%m-%d")
-            print(f"警告: 基準日が見つからないため当日日付を代用: {report_date}")
 
-    # 2. 既存データの取得（同日データは最新版に置換）
+    # 2. 既存データ（8列形式）の取得
     existing_data = worksheet.get_all_values()
-    headers = ["日付", "銘柄コード", "銘柄名", "売残(合計)", "売残(一般)", "売残(制度)", "買残(合計)", "買残(一般)", "買残(制度)"]
+    headers = ["日付", "銘柄コード", "売残(合計)", "売残(一般)", "売残(制度)", "買残(合計)", "買残(一般)", "買残(制度)"]
     data_rows = []
     
     if existing_data and len(existing_data[0]) > 0 and existing_data[0][0] == "日付":
-        # 旧形式（8列）の場合は銘柄名列なしで読み込まれるため適切に移行
+        # 過去データから同日を除外して読み込み
         for r in existing_data[1:]:
-            if len(r) == 8:
-                data_rows.append([r[0], r[1], "", r[2], r[3], r[4], r[5], r[6], r[7]])
-            elif len(r) >= 9:
-                data_rows.append(r[:9])
-    
-    # 同日の既存データを削除（上書き実行を可能にする）
-    data_rows = [row for row in data_rows if len(row) > 0 and row[0] != report_date]
+            if len(r) >= 8:
+                # 銘柄名列が入ってしまっている9列データがある場合はスキップ/補正
+                if len(r) >= 9 and not str(r[2]).replace('-', '').isdigit():
+                    row_8 = [r[0], r[1], r[3], r[4], r[5], r[6], r[7], r[8]]
+                else:
+                    row_8 = r[:8]
+                if row_8[0] != report_date:
+                    data_rows.append(row_8)
 
-    print(f"新着データの解析と更新処理を開始します...")
-    
-    # 3. 全ページの「Shs.」行から全データを正確に抽出
+    print("PDF解析を開始...")
     new_rows = []
     with pdfplumber.open(pdf_file) as pdf:
-        for page_idx, page in enumerate(pdf.pages):
+        for page in pdf.pages:
             words = page.extract_words()
             if not words:
                 continue
@@ -98,25 +96,19 @@ def main():
                 row_words = [w for w in words if abs(w["top"] - y) <= 3]
                 
                 code = None
-                company_name = ""
-                tot_sell = "0"
-                tot_buy = "0"
-                gen_sell = "0"
-                std_sell = "0"
-                gen_buy = "0"
-                std_buy = "0"
+                raw_name = ""
+                tot_sell, gen_sell, std_sell = "0", "0", "0"
+                tot_buy, gen_buy, std_buy = "0", "0", "0"
                 
-                name_parts = []
                 for w in row_words:
                     x = w["x0"]
                     text = w["text"]
                     
-                    # 銘柄名エリア（x < 170）
                     if x < 170:
-                        name_parts.append(text)
+                        raw_name += text
                         continue
                     
-                    # 【英字コード対応】285A などの英字入りコードも確実にキャプチャ
+                    # 英数字4文字（285A含む）に対応
                     if 170 <= x < 210 and re.match(r'^[0-9A-Za-z]{4}[0A-Za-z]?$', text):
                         code = text[:4].upper()
                         continue
@@ -125,49 +117,39 @@ def main():
                     if not re.match(r'^[\-\+]?\d+$', cleaned):
                         continue
                         
-                    if 260 <= x < 310:
-                        tot_sell = cleaned
-                    elif 370 <= x < 420:
-                        tot_buy = cleaned
-                    elif 490 <= x < 540:
-                        gen_sell = cleaned
-                    elif 570 <= x < 620:
-                        std_sell = cleaned
-                    elif 650 <= x < 700:
-                        gen_buy = cleaned
-                    elif 730 <= x < 780:
-                        std_buy = cleaned
+                    if 260 <= x < 310: tot_sell = cleaned
+                    elif 370 <= x < 420: tot_buy = cleaned
+                    elif 490 <= x < 540: gen_sell = cleaned
+                    elif 570 <= x < 620: std_sell = cleaned
+                    elif 650 <= x < 700: gen_buy = cleaned
+                    elif 730 <= x < 780: std_buy = cleaned
                 
-                if name_parts:
-                    company_name = "".join(name_parts).strip()
-
                 if code:
-                    # 1570以外のETF・投信はスキップ
-                    if code != "1570" and any(k in company_name for k in ["投信", "ETF", "受益証券"]):
+                    # 【ETF・投信完全除外】1570以外はスキップ
+                    if code != "1570" and any(k in raw_name for k in ["投信", "ETF", "受益証券", "連動型", "上場投信"]):
                         continue
                         
                     new_rows.append([
-                        report_date, code, company_name, tot_sell, gen_sell, std_sell,
+                        report_date, code, tot_sell, gen_sell, std_sell,
                         tot_buy, gen_buy, std_buy
                     ])
                     
-    print(f"抽出完了: {len(new_rows)} 銘柄（英字コード含む）")
+    print(f"抽出完了（ETF除外後）: {len(new_rows)} 銘柄")
     
     unique_rows = {}
     for r in new_rows:
         unique_rows[r[1]] = r
     final_rows = list(unique_rows.values())
 
-    # 4. 450日ローリングを適用してスプレッドシートを更新
+    # 3. 450日ローリング
     cutoff_date = datetime.datetime.now() - datetime.timedelta(days=450)
     cutoff_date_str = cutoff_date.strftime("%Y-%m-%d")
     filtered_rows = [row for row in data_rows if len(row) > 0 and row[0] >= cutoff_date_str]
-    
     filtered_rows.extend(final_rows)
     
     worksheet.clear()
     worksheet.update('A1', [headers] + filtered_rows)
-    print(f"スプレッドシート更新完了（基準日: {report_date} / 書き込み件数: {len(final_rows)} 銘柄）")
+    print(f"スプレッドシート更新完了（基準日: {report_date} / 行数: {len(final_rows)}）")
 
 if __name__ == "__main__":
     main()
