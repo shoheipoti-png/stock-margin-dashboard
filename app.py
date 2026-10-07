@@ -14,7 +14,6 @@ import yfinance as yf
 st.set_page_config(page_title="株価・信用残・機関空売りダッシュボード", layout="wide")
 st.title("株価・信用残・機関空売りダッシュボード")
 
-# スプレッドシートID
 DEFAULT_SPREADSHEET_ID = "1_YK99EVmXnTWHzE7oP9tO1jWYaxUiTinMyFQ-1n2M4g"
 DEFAULT_SHORT_SPREADSHEET_ID = "1Fdfmwq_6CBAG495JJD4EPgT7EOfyB9kZ_QAwU6pAXaU"
 
@@ -40,129 +39,99 @@ INSTITUTION_SHORT_NAMES = {
 }
 
 def get_short_inst_name(full_name):
-    if not full_name:
-        return "その他"
+    if not full_name: return "その他"
     fn_lower = str(full_name).lower()
     for key, val in INSTITUTION_SHORT_NAMES.items():
-        if key in fn_lower:
-            return val
+        if key in fn_lower: return val
     return str(full_name)[:6]
 
 def clean_ticker_code(val):
-    """数字4桁および英字入りコード（285Aなど）を正しく正規化"""
-    if pd.isna(val) or val is None:
-        return ""
+    if pd.isna(val) or val is None: return ""
     s = str(val).split('.')[0].strip().upper()
     return s[:4] if len(s) >= 4 else s
 
 @st.cache_data(ttl=60)
 def load_data_from_sheet(sheet_type="margin"):
-    """Googleスプレッドシートからデータを取得"""
     try:
         creds_raw = st.secrets.get("GCP_SERVICE_ACCOUNT_KEY") or os.environ.get("GCP_SERVICE_ACCOUNT_KEY")
-        if not creds_raw:
-            st.error("【設定エラー】GCP_SERVICE_ACCOUNT_KEY が見つかりません。")
-            return pd.DataFrame()
-            
-        if isinstance(creds_raw, dict):
-            creds_dict = creds_raw
-        elif hasattr(creds_raw, "to_dict"):
-            creds_dict = creds_raw.to_dict()
-        else:
-            creds_dict = json.loads(str(creds_raw).strip())
+        if not creds_raw: return pd.DataFrame()
+        if isinstance(creds_raw, dict): creds_dict = creds_raw
+        elif hasattr(creds_raw, "to_dict"): creds_dict = creds_raw.to_dict()
+        else: creds_dict = json.loads(str(creds_raw).strip())
 
         scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
         credentials = Credentials.from_service_account_info(creds_dict, scopes=scope)
         client = gspread.authorize(credentials)
-        
         sheet_id = DEFAULT_SPREADSHEET_ID if sheet_type == "margin" else DEFAULT_SHORT_SPREADSHEET_ID
         worksheet = client.open_by_key(sheet_id).sheet1
-        records = worksheet.get_all_records()
-        return pd.DataFrame(records)
-    except Exception as e:
-        st.error(f"スプレッドシート ({sheet_type}) 読み込み失敗: {e}")
+        return pd.DataFrame(worksheet.get_all_records())
+    except Exception:
         return pd.DataFrame()
 
-@st.cache_data(ttl=3600)
-def get_stock_price_history(ticker_code):
-    """yfinanceから株価・出来高・会社名を取得"""
+@st.cache_data(ttl=86400)
+def get_company_name_and_prices(ticker_code):
+    """社名と株価履歴を取得"""
+    clean_code = str(ticker_code).strip().upper()
+    comp_name = ""
+    prices = {}
     try:
-        clean_code = str(ticker_code).strip().upper()
-        yf_ticker = f"{clean_code}.T"
-        stock = yf.Ticker(yf_ticker)
-        
-        comp_name = ""
+        stock = yf.Ticker(f"{clean_code}.T")
+        # 社名取得
         try:
             info = stock.info or {}
             comp_name = info.get("shortName") or info.get("longName") or ""
-        except Exception:
+            # 不要な英語表記や「(株)」をカット
+            comp_name = comp_name.split()[0].replace("(株)", "").replace("ホールディングス", "HD")
+        except:
             pass
         
         hist = stock.history(period="1y")
-        if hist.empty:
-            return {}, comp_name
-        
-        hist = hist.sort_index(ascending=True)
-        hist['Pct_Change'] = hist['Close'].pct_change() * 100
-        
-        price_dict = {}
-        for idx_date, row in hist.iterrows():
-            d_str = idx_date.strftime("%Y-%m-%d")
-            pct = row['Pct_Change']
-            vol = row['Volume']
-            price_dict[d_str] = {
-                "pct": pct if pd.notna(pct) else 0.0,
-                "volume": vol if pd.notna(vol) else 0
-            }
-        return price_dict, comp_name
-    except Exception:
-        return {}, ""
+        if not hist.empty:
+            hist = hist.sort_index(ascending=True)
+            hist['Pct'] = hist['Close'].pct_change() * 100
+            for dt, row in hist.iterrows():
+                d_str = dt.strftime("%Y-%m-%d")
+                prices[d_str] = {
+                    "pct": row['Pct'] if pd.notna(row['Pct']) else 0.0,
+                    "volume": int(row['Volume']) if pd.notna(row['Volume']) else 0
+                }
+    except:
+        pass
+    return comp_name, prices
 
 def smart_format(val):
     try:
-        if val == "" or val is None or val == "-":
-            return "-"
+        if val == "" or val is None or val == "-": return "-"
         num = float(str(val).replace(',', ''))
-        if abs(num) >= 1_000_000:
-            return f"{num / 1_000_000:.1f}M"
-        elif abs(num) >= 1_000:
-            return f"{num / 1_000:.1f}K"
-        else:
-            return f"{int(num)}"
-    except Exception:
+        if abs(num) >= 1_000_000: return f"{num / 1_000_000:.1f}M"
+        elif abs(num) >= 1_000: return f"{num / 1_000:.1f}K"
+        else: return f"{int(num)}"
+    except:
         return str(val)
 
 def format_change(num):
-    """前日比のプラスマイナス・色・背景色"""
     try:
-        if num == "" or num is None or num == "-":
-            return "-", "#666", "transparent"
+        if num == "" or num is None or num == "-": return "-", "#666", "transparent"
         val = float(str(num).replace(',', ''))
-        if val == 0:
-            return "0", "#666", "#f0f2f6"
+        if val == 0: return "0", "#666", "#f0f2f6"
         color = "#d32f2f" if val > 0 else "#1976d2"
         bg = "#ffebee" if val > 0 else "#e3f2fd"
         sign = "+" if val > 0 else ""
-        if abs(val) >= 1_000_000:
-            formatted = f"{sign}{val / 1_000_000:.1f}M"
-        elif abs(val) >= 1_000:
-            formatted = f"{sign}{val / 1_000:.1f}K"
-        else:
-            formatted = f"{sign}{int(val)}"
+        if abs(val) >= 1_000_000: formatted = f"{sign}{val / 1_000_000:.1f}M"
+        elif abs(val) >= 1_000: formatted = f"{sign}{val / 1_000:.1f}K"
+        else: formatted = f"{sign}{int(val)}"
         return formatted, color, bg
-    except Exception:
+    except:
         return str(num), "#666", "#f0f2f6"
 
 def format_pct(num):
-    """株価前日比％"""
     try:
         val = float(num)
-        if val == 0:
-            return "0.0%", "#666"
+        if val == 0: return "0.0%", "#666"
         color = "#d32f2f" if val > 0 else "#1976d2"
         sign = "+" if val > 0 else ""
         return f"{sign}{val:.1f}%", color
-    except Exception:
+    except:
         return "-", "#666"
 
 ticker = st.text_input("銘柄コード（4桁）を入力してください", value="6315")
@@ -181,77 +150,53 @@ if ticker:
     cutoff_date = datetime.date.today() - datetime.timedelta(days=selected_days)
     cutoff_str = cutoff_date.strftime("%Y-%m-%d")
 
-    # 1. データ読み込み
     df_margin = load_data_from_sheet("margin")
     df_short = load_data_from_sheet("short")
+    company_name, stock_prices = get_company_name_and_prices(clean_target)
 
-    # 株価・会社名取得 (yfinance)
-    stock_prices, yf_company_name = get_stock_price_history(clean_target)
-
-    company_name = ""
-
-    # 2. 個人信用データの抽出
+    # 個人信用データの抽出
     if not df_margin.empty and "銘柄コード" in df_margin.columns:
         df_margin['clean_code'] = df_margin['銘柄コード'].apply(clean_ticker_code)
         m_filtered = df_margin[df_margin['clean_code'] == clean_target].copy()
-        if "銘柄名" in m_filtered.columns and not m_filtered.empty:
-            val_name = str(m_filtered["銘柄名"].iloc[0]).strip()
-            if val_name:
-                parts = val_name.split()
-                if parts:
-                    company_name = parts[0]
         if "日付" in m_filtered.columns:
             m_filtered = m_filtered[m_filtered["日付"] >= cutoff_str]
     else:
         m_filtered = pd.DataFrame()
 
-    # 3. 機関空売りデータの抽出
+    # 機関空売りデータの抽出
     if not df_short.empty and "銘柄コード" in df_short.columns:
         df_short['clean_code'] = df_short['銘柄コード'].apply(clean_ticker_code)
         s_filtered = df_short[df_short['clean_code'] == clean_target].copy()
-        if not company_name and not s_filtered.empty and "銘柄名" in s_filtered.columns:
-            raw_val = str(s_filtered["銘柄名"].iloc[0]).strip()
-            if raw_val:
-                parts = raw_val.split()
-                if parts:
-                    company_name = parts[0].replace("普通株式", "").strip()
         date_col = "計算年月日" if "計算年月日" in s_filtered.columns else "公表日"
         if date_col in s_filtered.columns:
             s_filtered = s_filtered[s_filtered[date_col] >= cutoff_str]
     else:
         s_filtered = pd.DataFrame()
 
-    # yfinance名からのフォールバック
-    if not company_name and yf_company_name:
-        parts = yf_company_name.split()
-        if parts:
-            company_name = parts[0]
-
     title_label = f"{clean_target}（{company_name}）" if company_name else clean_target
     st.subheader(f"{title_label} のデータ分析")
 
-    # 日付軸の決定（降順）
+    # 日付軸の決定（信用・機関データが存在する日付、または直近の営業日）
     all_dates = set()
     if not m_filtered.empty and "日付" in m_filtered.columns:
         all_dates.update(m_filtered["日付"].dropna().astype(str).tolist())
     if not s_filtered.empty:
         date_col = "計算年月日" if "計算年月日" in s_filtered.columns else "公表日"
         all_dates.update(s_filtered[date_col].dropna().astype(str).tolist())
-    if stock_prices:
-        all_dates.update([d for d in stock_prices.keys() if d >= cutoff_str])
 
     if not all_dates:
-        base_dates = [datetime.date.today() - datetime.timedelta(days=i) for i in range(min(selected_days, 15))]
-        sorted_dates = [d.strftime("%Y-%m-%d") for d in base_dates if d.weekday() < 5]
+        # データがない場合は直近10営業日
+        base_dates = [datetime.date.today() - datetime.timedelta(days=i) for i in range(15)]
+        sorted_dates = [d.strftime("%Y-%m-%d") for d in base_dates if d.weekday() < 5][:10]
     else:
         sorted_dates = sorted(list(all_dates), reverse=True)
 
-    # 機関リストの特定
+    # 機関リスト
     institutions = []
     if not s_filtered.empty and "機関名" in s_filtered.columns:
         institutions = s_filtered["機関名"].dropna().unique().tolist()
 
-    # 機関ごとの残高マップ構築
+    # 機関データマップ
     short_map = {}
     total_short_by_date = {}
     if not s_filtered.empty:
@@ -263,10 +208,8 @@ if ticker:
             daily_total = 0
             for _, r in group.iterrows():
                 inst = r.get("機関名", "")
-                try:
-                    shares = float(str(r.get("空売り残高数量", 0)).replace(',', ''))
-                except Exception:
-                    shares = 0
+                try: shares = float(str(r.get("空売り残高数量", 0)).replace(',', ''))
+                except: shares = 0
                 prev = prev_shares_by_inst.get(inst, 0)
                 diff = shares - prev if prev != 0 else 0
                 prev_shares_by_inst[inst] = shares
@@ -274,7 +217,7 @@ if ticker:
                 daily_total += shares
             total_short_by_date[d_str] = daily_total
 
-    # 個人信用マップの構築
+    # 個人信用マップ
     margin_map = {}
     if not m_filtered.empty and "日付" in m_filtered.columns:
         m_sorted = m_filtered.sort_values(by="日付", ascending=True)
@@ -282,28 +225,17 @@ if ticker:
         prev_buy = None
         for _, r in m_sorted.iterrows():
             d_str = str(r.get("日付", ""))
-            try:
-                cur_sell = float(str(r.get("売残(合計)", 0)).replace(',', ''))
-            except Exception:
-                cur_sell = 0
-            try:
-                cur_buy = float(str(r.get("買残(合計)", 0)).replace(',', ''))
-            except Exception:
-                cur_buy = 0
-                
+            try: cur_sell = float(str(r.get("売残(合計)", 0)).replace(',', ''))
+            except: cur_sell = 0
+            try: cur_buy = float(str(r.get("買残(合計)", 0)).replace(',', ''))
+            except: cur_buy = 0
             sell_diff = cur_sell - prev_sell if prev_sell is not None else 0
             buy_diff = cur_buy - prev_buy if prev_buy is not None else 0
-            prev_sell = cur_sell
-            prev_buy = cur_buy
-            
-            margin_map[d_str] = {
-                "row": r,
-                "sell_diff": sell_diff,
-                "buy_diff": buy_diff
-            }
+            prev_sell, prev_buy = cur_sell, cur_buy
+            margin_map[d_str] = {"row": r, "sell_diff": sell_diff, "buy_diff": buy_diff}
 
     # ----------------------------------------------------
-    # グラフ描画 (1画面・2軸：前日比色分け出来高棒グラフ + 残高折れ線)
+    # グラフ描画（1画面・2軸、日付を完全同期）
     # ----------------------------------------------------
     graph_dates = sorted(sorted_dates)
     buy_shares_list = []
@@ -316,41 +248,32 @@ if ticker:
         m_info = margin_map.get(d)
         if m_info:
             r = m_info["row"]
-            try:
-                b_val = float(str(r.get("買残(合計)", 0)).replace(',', ''))
-            except Exception:
-                b_val = None
-            try:
-                s_val = float(str(r.get("売残(合計)", 0)).replace(',', ''))
-            except Exception:
-                s_val = None
+            try: b_val = float(str(r.get("買残(合計)", 0)).replace(',', ''))
+            except: b_val = None
+            try: s_val = float(str(r.get("売残(合計)", 0)).replace(',', ''))
+            except: s_val = None
         else:
-            b_val = None
-            s_val = None
+            b_val, s_val = None, None
         buy_shares_list.append(b_val)
         sell_shares_list.append(s_val)
+        inst_shares_list.append(total_short_by_date.get(d, None))
 
-        tot_inst = total_short_by_date.get(d, None)
-        inst_shares_list.append(tot_inst)
-
+        # 出来高と前日比カラー
         p_info = stock_prices.get(d)
         if p_info:
             vol = p_info["volume"]
             pct = p_info["pct"]
             vol_list.append(vol)
-            if pct > 0:
-                vol_colors.append("rgba(239, 83, 80, 0.40)")   # 前日比プラス：薄い赤
-            elif pct < 0:
-                vol_colors.append("rgba(66, 165, 245, 0.40)")   # 前日比マイナス：薄い青
-            else:
-                vol_colors.append("rgba(189, 189, 189, 0.40)")  # 変わらず：薄いグレー
+            if pct > 0: vol_colors.append("rgba(239, 83, 80, 0.40)")     # 赤（プラス）
+            elif pct < 0: vol_colors.append("rgba(66, 165, 245, 0.40)")  # 青（マイナス）
+            else: vol_colors.append("rgba(189, 189, 189, 0.40)")
         else:
             vol_list.append(0)
             vol_colors.append("rgba(189, 189, 189, 0.30)")
 
     fig = make_subplots(specs=[[{"secondary_y": True}]])
 
-    # 1. 出来高（棒グラフ：右軸、前日比で赤・青に色分け）
+    # 出来高棒グラフ（1日1本、カテゴリー軸で均等配置）
     fig.add_trace(
         go.Bar(
             x=graph_dates, y=vol_list,
@@ -361,7 +284,7 @@ if ticker:
         secondary_y=True
     )
 
-    # 2. 個人買残（赤線：左軸）
+    # 個人買残（赤）
     fig.add_trace(
         go.Scatter(
             x=graph_dates, y=buy_shares_list,
@@ -372,7 +295,7 @@ if ticker:
         secondary_y=False
     )
 
-    # 3. 個人売残（青線：左軸）
+    # 個人売残（青）
     fig.add_trace(
         go.Scatter(
             x=graph_dates, y=sell_shares_list,
@@ -383,7 +306,7 @@ if ticker:
         secondary_y=False
     )
 
-    # 4. 機関空売り合計（オレンジ点線：左軸）
+    # 機関空売り合計（オレンジ点線）
     if any(v is not None and v > 0 for v in inst_shares_list):
         fig.add_trace(
             go.Scatter(
@@ -405,7 +328,8 @@ if ticker:
         template="plotly_white",
         bargap=0.3
     )
-    fig.update_xaxes(title_text="日付")
+    # 日付軸をカテゴリー（営業日のみ）に固定し、余分な日付スキップを防ぐ
+    fig.update_xaxes(type='category', title_text="日付")
     fig.update_yaxes(title_text="信用残・機関空売り (株数)", secondary_y=False)
     fig.update_yaxes(
         title_text="出来高 (株数)",
@@ -449,10 +373,10 @@ if ticker:
         try:
             dt = datetime.datetime.strptime(d, "%Y-%m-%d")
             date_str = dt.strftime("%m/%d<br>%a")
-        except Exception:
+        except:
             date_str = d
 
-        # 株価前日比・出来高
+        # 株価・出来高
         price_info = stock_prices.get(d)
         if price_info:
             pct_str, pct_color = format_pct(price_info["pct"])
@@ -464,7 +388,7 @@ if ticker:
         else:
             price_cell_html = '<div style="color: #666;">-</div>'
 
-        # 機関列のセル生成
+        # 機関列
         inst_tds = ""
         daily_short_sum = 0
         for inst in institutions:
@@ -495,7 +419,7 @@ if ticker:
         else:
             all_change_html = '<div style="color: #666;">-</div>'
 
-        # 個人信用の取得
+        # 個人信用
         m_info = margin_map.get(d)
         if m_info is not None:
             r = m_info["row"]
@@ -532,7 +456,7 @@ if ticker:
         )
         rows_html.append(row_html)
 
-    # 機関一覧リスト（上部サマリー）
+    # 機関一覧リスト
     if inst_count > 0:
         inst_summary_html = (
             '<div style="margin-bottom: 12px; font-family: sans-serif;">'
