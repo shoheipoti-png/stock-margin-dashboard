@@ -3,7 +3,6 @@ import pandas as pd
 import datetime
 import streamlit.components.v1 as components
 
-# 分割した自作モジュールをインポート
 from data_loader import (
     clean_ticker_code,
     load_data_from_sheet,
@@ -16,57 +15,52 @@ from watchlist_manager import (
     init_watchlist_state,
     is_favorite,
     toggle_favorite,
-    move_item,
-    remove_item
+    reorder_watchlist,
+    save_watchlist,
+    render_drag_and_drop_watchlist
 )
 
 st.set_page_config(page_title="株価・信用残・機関空売りダッシュボード", layout="wide")
 
-# ウォッチリストの状態を初期化
 init_watchlist_state()
 
 # ----------------------------------------------------
-# 左側サイドバー（ウォッチリスト）の構築
+# URLクエリパラメータのイベント処理（クリック選択、並び替え、削除）
+# ----------------------------------------------------
+params = st.query_params
+
+# 銘柄選択
+if "ticker" in params:
+    sel = params.get("ticker")
+    st.session_state.current_ticker = clean_ticker_code(sel)
+    del st.query_params["ticker"]
+    st.rerun()
+
+# 削除
+if "del_ticker" in params:
+    del_code = params.get("del_ticker")
+    st.session_state.watchlist = [
+        it for it in st.session_state.watchlist
+        if (it.get("code") if isinstance(it, dict) else it) != del_code
+    ]
+    save_watchlist(st.session_state.watchlist)
+    del st.query_params["del_ticker"]
+    st.rerun()
+
+# ドラッグ＆ドロップによる並び替え
+if "reorder" in params:
+    new_order = params.get("reorder").split(",")
+    reorder_watchlist(new_order)
+    del st.query_params["reorder"]
+    st.rerun()
+
+# ----------------------------------------------------
+# 左側サイドバー（ドラッグ＆ドロップ対応ウォッチリスト）
 # ----------------------------------------------------
 with st.sidebar:
     st.header("📋 ウォッチリスト")
-    st.caption("よく見る銘柄をワンクリックで分析・並び替え")
-
-    watchlist = st.session_state.watchlist
-    if not watchlist:
-        st.info("「★ 追加」ボタンでお気に入りを追加してください")
-    else:
-        for idx, item in enumerate(watchlist):
-            c_code = item if isinstance(item, str) else item.get("code", "")
-            c_name = item.get("name", "") if isinstance(item, dict) else ""
-
-            # 銘柄名ボタンと操作ボタン（上移動、下移動、削除）
-            col_btn, col_up, col_down, col_del = st.columns([5.5, 1.3, 1.3, 1.3])
-
-            with col_btn:
-                btn_text = f"{c_code} {c_name[:5]}" if c_name else c_code
-                if st.button(btn_text, key=f"sel_{c_code}_{idx}", use_container_width=True):
-                    st.session_state.current_ticker = c_code
-                    st.rerun()
-
-            with col_up:
-                # 視認性の高い絵文字アイコン（⬆️）
-                if st.button("⬆️", key=f"up_{idx}", help="上へ移動", disabled=(idx == 0)):
-                    move_item(idx, -1)
-                    st.rerun()
-
-            with col_down:
-                # 視認性の高い絵文字アイコン（⬇️）
-                if st.button("⬇️", key=f"down_{idx}", help="下へ移動", disabled=(idx == len(watchlist) - 1)):
-                    move_item(idx, 1)
-                    st.rerun()
-
-            with col_del:
-                # 視認性の高いゴミ箱アイコン（🗑️）
-                if st.button("🗑️", key=f"del_{idx}", help="リストから削除"):
-                    remove_item(idx)
-                    st.rerun()
-
+    st.caption("☰をドラッグして並び替え / 銘柄クリックで分析")
+    render_drag_and_drop_watchlist()
     st.divider()
 
 # ----------------------------------------------------
@@ -74,13 +68,11 @@ with st.sidebar:
 # ----------------------------------------------------
 st.title("株価・信用残・機関空売りダッシュボード")
 
-# セッション状態から選択中のティッカーを取得（デフォルト: 6315）
 if "current_ticker" not in st.session_state:
     st.session_state.current_ticker = "6315"
 
 ticker = st.text_input("銘柄コード（4桁）を入力してください", value=st.session_state.current_ticker)
 
-# 入力欄が手動で書き換えられた場合は更新
 if ticker != st.session_state.current_ticker:
     st.session_state.current_ticker = ticker
 
@@ -104,16 +96,15 @@ if ticker:
     company_name = get_company_name_from_yahoo_japan(clean_target)
     stock_prices = get_stock_prices(clean_target)
 
-    # 2. 銘柄ヘッダーとお気に入りボタン（見出しのすぐ右隣にコンパクト配置）
+    # 2. 銘柄ヘッダーとお気に入りボタン（見出しのすぐ右隣に配置）
     title_label = f"{clean_target}（{company_name}）" if company_name else clean_target
     fav_status = is_favorite(clean_target)
     btn_label = "★ 削除" if fav_status else "★ 追加"
 
-    col_title, col_fav, col_empty = st.columns([0.48, 0.14, 0.38])
+    col_title, col_fav, col_empty = st.columns([0.45, 0.12, 0.43])
     with col_title:
         st.subheader(f"{title_label} のデータ分析")
     with col_fav:
-        # ボタンの縦位置を見出しの高さに自然にフィットさせる
         st.write("")
         if st.button(btn_label, use_container_width=True):
             toggle_favorite(clean_target, company_name)
