@@ -1,7 +1,7 @@
 import json
 import os
 import streamlit as st
-import streamlit.components.v1 as components
+from streamlit_sortables import sort_items
 
 WATCHLIST_FILE = "watchlist.json"
 
@@ -58,210 +58,83 @@ def is_favorite(code):
     existing_codes = [item.get("code") if isinstance(item, dict) else item for item in current]
     return code_str in existing_codes
 
-def reorder_watchlist(new_codes_list):
-    """ドラッグ＆ドロップで並び替えられた順番に更新"""
-    current = st.session_state.watchlist
-    item_map = {item.get("code") if isinstance(item, dict) else item: item for item in current}
-    new_list = [item_map[c] for c in new_codes_list if c in item_map]
-    st.session_state.watchlist = new_list
-    save_watchlist(new_list)
+def remove_item(code):
+    """銘柄コード指定で削除"""
+    code_str = str(code).strip().upper()
+    st.session_state.watchlist = [
+        item for item in st.session_state.watchlist 
+        if (item.get("code") if isinstance(item, dict) else item) != code_str
+    ]
+    save_watchlist(st.session_state.watchlist)
 
-def render_drag_and_drop_watchlist():
-    """TradingView風 ドラッグ＆ドロップ対応ウォッチリストUI"""
+def render_watchlist_ui():
+    """TradingView風UI：クリック切り替え・✕削除・ドラッグ＆ドロップ並び替え対応"""
     watchlist = st.session_state.watchlist
     if not watchlist:
         st.info("「★ 追加」でお気に入り銘柄を登録できます")
         return
 
-    items_json = json.dumps(watchlist, ensure_ascii=False)
+    # ボタンの余白を極限までコンパクトにし、白抜き文字欠けを防ぐCSS
+    st.markdown("""
+        <style>
+        /* サイドバー内のボタンのスタイリング */
+        div[data-testid="stSidebar"] div.stButton > button {
+            padding: 4px 6px !important;
+            font-size: 13px !important;
+            min-height: 34px !important;
+            line-height: 1.2 !important;
+            border-radius: 6px !important;
+        }
+        /* ✕削除ボタンのスタイリング */
+        div[data-testid="stSidebar"] div.stButton > button:has(div:contains("✕")),
+        div[data-testid="stSidebar"] div.stButton > button[kind="secondary"] {
+            color: #888 !important;
+        }
+        div[data-testid="stSidebar"] div.stButton > button:hover {
+            color: #d32f2f !important;
+            border-color: #d32f2f !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
 
-    html_code = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-    <meta charset="utf-8">
-    <style>
-      body {{
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-        margin: 0;
-        padding: 4px;
-        background: transparent;
-        user-select: none;
-      }}
-      .list-container {{
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-      }}
-      .item {{
-        display: flex;
-        align-items: center;
-        background: #ffffff;
-        border: 1px solid #e0e0e0;
-        border-radius: 6px;
-        padding: 8px 10px;
-        cursor: grab;
-        transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-      }}
-      .item:hover {{
-        border-color: #2962ff;
-        box-shadow: 0 2px 6px rgba(41,98,255,0.15);
-      }}
-      .item.dragging {{
-        opacity: 0.35;
-        cursor: grabbing;
-        background: #f5f5f5;
-      }}
-      .drag-handle {{
-        color: #9e9e9e;
-        margin-right: 10px;
-        font-size: 14px;
-        cursor: grab;
-        flex-shrink: 0;
-      }}
-      .ticker-info {{
-        flex-grow: 1;
-        display: flex;
-        align-items: baseline;
-        gap: 8px;
-        cursor: pointer;
-        overflow: hidden;
-      }}
-      .ticker-code {{
-        font-weight: 700;
-        font-size: 14px;
-        color: #1a1a1a;
-      }}
-      .ticker-name {{
-        font-size: 12px;
-        color: #616161;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        max-width: 110px;
-      }}
-      .del-btn {{
-        background: transparent;
-        border: none;
-        color: #b0bec5;
-        font-size: 15px;
-        font-weight: bold;
-        padding: 2px 6px;
-        border-radius: 4px;
-        cursor: pointer;
-        transition: color 0.15s, background 0.15s;
-        margin-left: 6px;
-        flex-shrink: 0;
-        line-height: 1;
-      }}
-      .del-btn:hover {{
-        color: #d32f2f;
-        background: #ffebee;
-      }}
-    </style>
-    </head>
-    <body>
-      <div id="watchlist" class="list-container"></div>
+    # 1. 各銘柄のクリック切り替え & ✕削除ボタン
+    for item in watchlist:
+        c_code = item.get("code") if isinstance(item, dict) else item
+        c_name = item.get("name") if isinstance(item, dict) else ""
+        
+        col_main, col_del = st.columns([0.82, 0.18])
+        with col_main:
+            # 銘柄名をクリックすると100%確実にメイン画面を切り替え
+            label = f"📊 {c_code} {c_name[:5]}" if c_name else f"📊 {c_code}"
+            if st.button(label, key=f"wl_sel_{c_code}", use_container_width=True):
+                st.session_state.current_ticker = c_code
+                st.rerun()
+                
+        with col_del:
+            # ✕ボタンをクリックすると100%確実に削除
+            if st.button("✕", key=f"wl_del_{c_code}", help=f"{c_code} をリストから削除", use_container_width=True):
+                remove_item(c_code)
+                st.rerun()
 
-      <script>
-        const items = {items_json};
-        const container = document.getElementById('watchlist');
-
-        // 親ウィンドウのURLパラメータを安全・確実に更新して遷移する関数
-        function navigateParent(paramName, paramValue) {{
-          try {{
-            const topUrl = new URL(window.top.location.href);
-            // 余計なパラメータを一度リセットして目的のパラメータをセット
-            topUrl.searchParams.delete('ticker');
-            topUrl.searchParams.delete('del_ticker');
-            topUrl.searchParams.delete('reorder');
-            topUrl.searchParams.set(paramName, paramValue);
-            window.top.location.href = topUrl.origin + topUrl.pathname + topUrl.search;
-          }} catch (e) {{
-            // フォールバック
-            window.top.location.search = '?' + paramName + '=' + encodeURIComponent(paramValue);
-          }}
-        }}
-
-        function renderList() {{
-          container.innerHTML = '';
-          items.forEach((item, index) => {{
-            const code = item.code || item;
-            const name = item.name || '';
-            const div = document.createElement('div');
-            div.className = 'item';
-            div.draggable = true;
-            div.dataset.index = index;
-            div.dataset.code = code;
-
-            div.innerHTML = `
-              <span class="drag-handle" title="ドラッグして並び替え">☰</span>
-              <div class="ticker-info" title="${{code}} ${{name}} を表示">
-                <span class="ticker-code">${{code}}</span>
-                <span class="ticker-name">${{name}}</span>
-              </div>
-              <button class="del-btn" title="リストから削除">✕</button>
-            `;
-
-            // 銘柄クリック処理
-            const tickerInfo = div.querySelector('.ticker-info');
-            tickerInfo.addEventListener('click', (e) => {{
-              e.stopPropagation();
-              navigateParent('ticker', code);
-            }});
-
-            // ✕削除ボタンクリック処理
-            const delBtn = div.querySelector('.del-btn');
-            delBtn.addEventListener('click', (e) => {{
-              e.stopPropagation();
-              navigateParent('del_ticker', code);
-            }});
-
-            // ドラッグ＆ドロップイベント
-            div.addEventListener('dragstart', handleDragStart);
-            div.addEventListener('dragover', handleDragOver);
-            div.addEventListener('drop', handleDrop);
-            div.addEventListener('dragend', handleDragEnd);
-
-            container.appendChild(div);
-          }});
-        }}
-
-        let draggedIndex = null;
-
-        function handleDragStart(e) {{
-          draggedIndex = +this.dataset.index;
-          this.classList.add('dragging');
-          e.dataTransfer.effectAllowed = 'move';
-        }}
-
-        function handleDragOver(e) {{
-          e.preventDefault();
-          e.dataTransfer.dropEffect = 'move';
-        }}
-
-        function handleDrop(e) {{
-          e.stopPropagation();
-          const targetIndex = +this.dataset.index;
-          if (draggedIndex !== null && draggedIndex !== targetIndex) {{
-            const moved = items.splice(draggedIndex, 1)[0];
-            items.splice(targetIndex, 0, moved);
-            renderList();
-
-            const codes = items.map(it => it.code || it).join(',');
-            navigateParent('reorder', codes);
-          }}
-        }}
-
-        function handleDragEnd() {{
-          this.classList.remove('dragging');
-        }}
-
-        renderList();
-      </script>
-    </body>
-    </html>
-    """
-    calc_height = max(180, len(watchlist) * 44 + 30)
-    components.html(html_code, height=calc_height, scrolling=False)
+    # 2. ドラッグ＆ドロップ並び替え用のアコーディオン
+    with st.expander("↕️ ドラッグ＆ドロップで並び替え", expanded=False):
+        st.caption("カードをつかんで上下に並び替えると即座に反映されます")
+        
+        display_labels = [
+            f"{it.get('code', '')} {it.get('name', '')}".strip() 
+            for it in watchlist
+        ]
+        
+        sorted_labels = sort_items(display_labels, key="wl_sortable")
+        
+        # 順番が変わった場合に検知して保存
+        if sorted_labels != display_labels:
+            new_watchlist = []
+            for lab in sorted_labels:
+                code_part = lab.split()[0]
+                matching = next((it for it in watchlist if (it.get("code") if isinstance(it, dict) else it) == code_part), None)
+                if matching:
+                    new_watchlist.append(matching)
+            st.session_state.watchlist = new_watchlist
+            save_watchlist(new_watchlist)
+            st.rerun()
