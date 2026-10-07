@@ -15,9 +15,7 @@ from watchlist_manager import (
     init_watchlist_state,
     is_favorite,
     toggle_favorite,
-    reorder_watchlist,
-    save_watchlist,
-    render_drag_and_drop_watchlist
+    render_watchlist_ui
 )
 
 st.set_page_config(page_title="株価・信用残・機関空売りダッシュボード", layout="wide")
@@ -25,42 +23,12 @@ st.set_page_config(page_title="株価・信用残・機関空売りダッシュ�
 init_watchlist_state()
 
 # ----------------------------------------------------
-# URLクエリパラメータのイベント処理（銘柄選択・削除・DnD並び替え）
-# ----------------------------------------------------
-params = st.query_params
-
-# 1. 銘柄クリックによる選択
-if "ticker" in params:
-    sel = params.get("ticker")
-    st.session_state.current_ticker = clean_ticker_code(sel)
-    del st.query_params["ticker"]
-    st.rerun()
-
-# 2. ✕ボタンによる削除
-if "del_ticker" in params:
-    del_code = clean_ticker_code(params.get("del_ticker"))
-    st.session_state.watchlist = [
-        it for it in st.session_state.watchlist
-        if (it.get("code") if isinstance(it, dict) else it) != del_code
-    ]
-    save_watchlist(st.session_state.watchlist)
-    del st.query_params["del_ticker"]
-    st.rerun()
-
-# 3. ドラッグ＆ドロップによる並び替え
-if "reorder" in params:
-    new_order = params.get("reorder").split(",")
-    reorder_watchlist(new_order)
-    del st.query_params["reorder"]
-    st.rerun()
-
-# ----------------------------------------------------
-# 左側サイドバー（TradingView風 ドラッグ＆ドロップ ウォッチリスト）
+# 左側サイドバー（ウォッチリスト）
 # ----------------------------------------------------
 with st.sidebar:
     st.header("📋 ウォッチリスト")
-    st.caption("☰をドラッグして並び替え / 銘柄クリックで分析")
-    render_drag_and_drop_watchlist()
+    st.caption("ワンクリック分析 / ✕で削除 / ドラッグ並び替え")
+    render_watchlist_ui()
     st.divider()
 
 # ----------------------------------------------------
