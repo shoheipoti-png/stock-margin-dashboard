@@ -1,12 +1,11 @@
 streamlit
 pandas
+yfinance
+plotly
 requests
 beautifulsoup4
-pdfplumber
 gspread
 google-auth
-plotly
-yfinance
+pdfplumber
 xlrd
-openpyxl
 streamlit-sortables
