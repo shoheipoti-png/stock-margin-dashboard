@@ -30,7 +30,7 @@ def get_latest_short_xls_url():
 def clean_code(val):
     if pd.isna(val):
         return None
-    s = str(val).split('.')[0].strip()
+    s = str(val).split('.')[0].strip().upper()
     return s[:4] if len(s) >= 4 else s
 
 def clean_int(val):
@@ -63,7 +63,7 @@ def format_date(val):
     return s
 
 def main():
-    print("機関投資家空売りデータ取得を開始します...")
+    print("機関投資家空売りデータ取得（英字コード・ETF除外対応版）を開始します...")
     creds_json = os.environ.get("GCP_SERVICE_ACCOUNT_KEY")
     sheet_id = os.environ.get("SHORT_SPREADSHEET_ID")
     
@@ -77,7 +77,6 @@ def main():
     credentials = Credentials.from_service_account_info(creds_dict, scopes=scope)
     client = gspread.authorize(credentials)
     worksheet = client.open_by_key(sheet_id).sheet1
-    print(f"接続シート: {client.open_by_key(sheet_id).title} / タブ: {worksheet.title}")
 
     # 2. 最新ファイルURL取得 & ダウンロード
     xls_url = get_latest_short_xls_url()
@@ -89,27 +88,27 @@ def main():
     res = requests.get(xls_url)
     raw_df = pd.read_excel(io.BytesIO(res.content), engine='xlrd')
 
-    # 3. 公表年月日の取得 (Row 3, Col 2)
+    # 3. 公表年月日の取得
     raw_disc_date = raw_df.iloc[3, 2]
     disclosure_date = format_date(raw_disc_date)
     print(f"公表年月日: {disclosure_date}")
     if not disclosure_date:
         disclosure_date = datetime.date.today().strftime("%Y-%m-%d")
 
-    # 4. データ行のパース (Row 7以降)
-    # Col 1: 計算日, Col 2: コード, Col 3: 銘柄名, Col 5: 機関名, Col 10: 残高割合, Col 11: 数量(株数), Col 13: 直近計算日, Col 14: 直近割合
+    # 4. データ行のパース
     data_df = raw_df.iloc[7:].copy()
     
     parsed_rows = []
     for _, row in data_df.iterrows():
         code = clean_code(row.iloc[2])
-        if not code or not re.match(r'^\d{4}$', code):
+        # 【英字コード対応】285A などの英字入り4文字コードも漏らさず取得
+        if not code or not re.match(r'^[0-9A-Za-z]{4}$', code):
             continue
             
         name = str(row.iloc[3]).replace('\n', ' ').strip() if pd.notna(row.iloc[3]) else ""
         
         # 【ETF・投信の除外判定】1570（日経レバ）以外のETF・投信・受益証券はスキップ
-        if code != "1570" and any(k in name for k in ["投信", "ETF", "受益証券"]):
+        if code != "1570" and any(k in name for k in ["投信", "ETF", "受益証券", "連動型", "上場投信"]):
             continue
 
         calc_date = format_date(row.iloc[1])
@@ -144,14 +143,13 @@ def main():
     if existing_data and len(existing_data[0]) > 0 and existing_data[0][0] == "公表日":
         data_rows = existing_data[1:]
 
-    # 今回の公表日と同じデータがあれば除外して最新に置換
+    # 今回の公表日と同じデータを除外して置換
     data_rows = [row for row in data_rows if len(row) > 0 and row[0] != disclosure_date]
 
     # 450日ローリング
     cutoff_date = datetime.datetime.now() - datetime.timedelta(days=450)
     cutoff_date_str = cutoff_date.strftime("%Y-%m-%d")
     filtered_rows = [row for row in data_rows if len(row) > 0 and row[0] >= cutoff_date_str]
-
     filtered_rows.extend(parsed_rows)
 
     # 6. シートへ書き込み
