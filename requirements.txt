@@ -8,4 +8,3 @@ gspread
 google-auth
 pdfplumber
 xlrd
-streamlit-sortables
