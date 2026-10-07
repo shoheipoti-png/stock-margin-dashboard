@@ -12,11 +12,75 @@ from data_loader import (
 )
 from chart_view import render_combined_chart
 from table_view import render_institution_summary_html, render_main_table_html
+from watchlist_manager import (
+    init_watchlist_state,
+    is_favorite,
+    toggle_favorite,
+    move_item,
+    remove_item
+)
 
 st.set_page_config(page_title="株価・信用残・機関空売りダッシュボード", layout="wide")
+
+# ウォッチリストの状態を初期化
+init_watchlist_state()
+
+# ----------------------------------------------------
+# 左側サイドバー（ウォッチリスト）の構築
+# ----------------------------------------------------
+with st.sidebar:
+    st.header("📋 ウォッチリスト")
+    st.caption("よく見る銘柄をワンクリックで分析・並び替え")
+
+    # リスト一覧の表示
+    watchlist = st.session_state.watchlist
+    if not watchlist:
+        st.info("★ボタンでお気に入りを追加してください")
+    else:
+        for idx, item in enumerate(watchlist):
+            c_code = item if isinstance(item, str) else item.get("code", "")
+            c_name = item.get("name", "") if isinstance(item, dict) else ""
+            display_label = f"**{c_code}** {c_name}" if c_name else f"**{c_code}**"
+
+            col_btn, col_up, col_down, col_del = st.columns([6, 1.2, 1.2, 1.2])
+
+            with col_btn:
+                # 銘柄クリックでメイン画面を即切り替え
+                if st.button(f"{c_code} {c_name[:6]}", key=f"sel_{c_code}_{idx}", use_container_width=True):
+                    st.session_state.current_ticker = c_code
+                    st.rerun()
+
+            with col_up:
+                if st.button("▲", key=f"up_{idx}", help="上へ移動", disabled=(idx == 0)):
+                    move_item(idx, -1)
+                    st.rerun()
+
+            with col_down:
+                if st.button("▼", key=f"down_{idx}", help="下へ移動", disabled=(idx == len(watchlist) - 1)):
+                    move_item(idx, 1)
+                    st.rerun()
+
+            with col_del:
+                if st.button("✕", key=f"del_{idx}", help="リストから削除"):
+                    remove_item(idx)
+                    st.rerun()
+
+    st.divider()
+
+# ----------------------------------------------------
+# メイン画面
+# ----------------------------------------------------
 st.title("株価・信用残・機関空売りダッシュボード")
 
-ticker = st.text_input("銘柄コード（4桁）を入力してください", value="285A")
+# セッション状態から選択中のティッカーを取得（デフォルト: 6315）
+if "current_ticker" not in st.session_state:
+    st.session_state.current_ticker = "6315"
+
+ticker = st.text_input("銘柄コード（4桁）を入力してください", value=st.session_state.current_ticker)
+
+# 入力欄が手動で書き換えられた場合は更新
+if ticker != st.session_state.current_ticker:
+    st.session_state.current_ticker = ticker
 
 if ticker:
     clean_target = clean_ticker_code(ticker)
@@ -38,7 +102,21 @@ if ticker:
     company_name = get_company_name_from_yahoo_japan(clean_target)
     stock_prices = get_stock_prices(clean_target)
 
-    # 2. 銘柄コード・期間によるフィルタリング
+    # 2. 銘柄ヘッダーとお気に入り（★）ボタン
+    col_title, col_fav = st.columns([8, 2])
+    title_label = f"{clean_target}（{company_name}）" if company_name else clean_target
+    
+    with col_title:
+        st.subheader(f"{title_label} のデータ分析")
+        
+    with col_fav:
+        fav_status = is_favorite(clean_target)
+        btn_label = "★ お気に入り解除" if fav_status else "☆ お気に入り追加"
+        if st.button(btn_label, use_container_width=True):
+            toggle_favorite(clean_target, company_name)
+            st.rerun()
+
+    # 3. 銘柄コード・期間によるフィルタリング
     if not df_margin.empty and "銘柄コード" in df_margin.columns:
         df_margin['clean_code'] = df_margin['銘柄コード'].apply(clean_ticker_code)
         m_filtered = df_margin[df_margin['clean_code'] == clean_target].copy()
@@ -56,10 +134,7 @@ if ticker:
     else:
         s_filtered = pd.DataFrame()
 
-    title_label = f"{clean_target}（{company_name}）" if company_name else clean_target
-    st.subheader(f"{title_label} のデータ分析")
-
-    # 3. 日付軸とマッピングの構築
+    # 4. 日付軸とマッピングの構築
     all_dates = set()
     if not m_filtered.empty and "日付" in m_filtered.columns:
         all_dates.update(m_filtered["日付"].dropna().astype(str).tolist())
@@ -112,7 +187,7 @@ if ticker:
             prev_sell, prev_buy = cur_sell, cur_buy
             margin_map[d_str] = {"row": r, "sell_diff": sell_diff, "buy_diff": buy_diff}
 
-    # 4. グラフ用データの整形と描画
+    # 5. グラフ用データの整形と描画（同一株数軸）
     graph_dates = sorted(sorted_dates)
     buy_shares_list = []
     sell_shares_list = []
@@ -139,8 +214,8 @@ if ticker:
             vol = p_info["volume"]
             pct = p_info["pct"]
             vol_list.append(vol)
-            if pct > 0: vol_colors.append("rgba(239, 83, 80, 0.45)")     # 赤
-            elif pct < 0: vol_colors.append("rgba(66, 165, 245, 0.45)")  # 青
+            if pct > 0: vol_colors.append("rgba(239, 83, 80, 0.45)")     # 赤（プラス）
+            elif pct < 0: vol_colors.append("rgba(66, 165, 245, 0.45)")  # 青（マイナス）
             else: vol_colors.append("rgba(189, 189, 189, 0.45)")
         else:
             vol_list.append(0)
@@ -149,7 +224,7 @@ if ticker:
     fig = render_combined_chart(graph_dates, buy_shares_list, sell_shares_list, inst_shares_list, vol_list, vol_colors, title_label)
     st.plotly_chart(fig, use_container_width=True)
 
-    # 5. 機関一覧とHTMLテーブルの表示
+    # 6. 機関一覧とHTMLテーブルの表示
     if institutions:
         inst_summary_html = render_institution_summary_html(institutions, title_label)
         components.html(inst_summary_html, height=min(180, 40 + len(institutions) * 28), scrolling=True)
