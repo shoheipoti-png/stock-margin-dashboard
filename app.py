@@ -15,6 +15,7 @@ from watchlist_manager import (
     init_watchlist_state,
     is_favorite,
     toggle_favorite,
+    save_watchlist,
     render_watchlist_ui
 )
 
@@ -23,12 +24,45 @@ st.set_page_config(page_title="株価・信用残・機関空売りダッシュ�
 init_watchlist_state()
 
 # ----------------------------------------------------
-# 左側サイドバー（ウォッチリスト）
+# 左側サイドバー（TradingView風 ドラッグ＆ドロップ ウォッチリスト）
 # ----------------------------------------------------
 with st.sidebar:
     st.header("📋 ウォッチリスト")
-    st.caption("クリックで即時分析 / ✕で削除")
-    render_watchlist_ui()
+    st.caption("☰をつかんで並び替え / 銘柄クリックで分析")
+    
+    # コンポーネントからのイベントを受信
+    event_data = render_watchlist_ui()
+    
+    if event_data and isinstance(event_data, dict):
+        action = event_data.get("action")
+        
+        # 1. 銘柄クリック
+        if action == "select":
+            selected_code = event_data.get("code")
+            if selected_code:
+                st.session_state.current_ticker = selected_code
+                st.rerun()
+                
+        # 2. ✕ボタン削除
+        elif action == "delete":
+            del_code = event_data.get("code")
+            if del_code:
+                st.session_state.watchlist = [
+                    it for it in st.session_state.watchlist
+                    if (it.get("code") if isinstance(it, dict) else it) != del_code
+                ]
+                save_watchlist(st.session_state.watchlist)
+                st.rerun()
+                
+        # 3. ドラッグ＆ドロップ並び替え
+        elif action == "reorder":
+            new_order = event_data.get("order", [])
+            current = st.session_state.watchlist
+            item_map = {it.get("code") if isinstance(it, dict) else it: it for it in current}
+            st.session_state.watchlist = [item_map[c] for c in new_order if c in item_map]
+            save_watchlist(st.session_state.watchlist)
+            st.rerun()
+
     st.divider()
 
 # ----------------------------------------------------
