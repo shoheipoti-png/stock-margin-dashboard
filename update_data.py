@@ -29,7 +29,7 @@ def clean_val(text):
     return v if v not in ['-', '*', ''] else "0"
 
 def main():
-    print("JPX個人信用データ取得（重複スキップ機能付き）を開始します...")
+    print("JPX個人信用データ取得（英字コード・銘柄名対応版）を開始します...")
     creds_json = os.environ.get("GCP_SERVICE_ACCOUNT_KEY")
     sheet_id = os.environ.get("SPREADSHEET_ID")
     
@@ -54,7 +54,7 @@ def main():
     
     report_date = None
     
-    # 1. 1ページ目から正式な「申込み現在日」を正確に抽出
+    # 1. 1ページ目から正式な「申込み現在日」を抽出
     with pdfplumber.open(pdf_file) as pdf:
         p0_text = pdf.pages[0].extract_text()
         date_match = re.search(r'(\d{4})/(\d{1,2})/(\d{1,2})\s*申込み現在', p0_text)
@@ -65,23 +65,25 @@ def main():
             report_date = datetime.date.today().strftime("%Y-%m-%d")
             print(f"警告: 基準日が見つからないため当日日付を代用: {report_date}")
 
-    # 2. 【重複スキップ判定】すでにスプレッドシートに同じ日付のデータが存在するか確認
+    # 2. 既存データの取得（同日データは最新版に置換）
     existing_data = worksheet.get_all_values()
-    headers = ["日付", "銘柄コード", "売残(合計)", "売残(一般)", "売残(制度)", "買残(合計)", "買残(一般)", "買残(制度)"]
+    headers = ["日付", "銘柄コード", "銘柄名", "売残(合計)", "売残(一般)", "売残(制度)", "買残(合計)", "買残(一般)", "買残(制度)"]
     data_rows = []
     
-    if existing_data and len(existing_data[0]) > 0 and existing_data[0][0] == "日付" and len(existing_data[0]) == len(headers):
-        data_rows = existing_data[1:]
+    if existing_data and len(existing_data[0]) > 0 and existing_data[0][0] == "日付":
+        # 旧形式（8列）の場合は銘柄名列なしで読み込まれるため適切に移行
+        for r in existing_data[1:]:
+            if len(r) == 8:
+                data_rows.append([r[0], r[1], "", r[2], r[3], r[4], r[5], r[6], r[7]])
+            elif len(r) >= 9:
+                data_rows.append(r[:9])
     
-    # すでに同日のデータがシート内に存在するかチェック
-    dates_in_sheet = {row[0] for row in data_rows if len(row) > 0}
-    if report_date in dates_in_sheet:
-        print(f"【スキップ】基準日 '{report_date}' のデータはすでにスプレッドシートに存在するため、更新を終了します。")
-        return
+    # 同日の既存データを削除（上書き実行を可能にする）
+    data_rows = [row for row in data_rows if len(row) > 0 and row[0] != report_date]
 
-    print(f"新着データを確認しました。解析と更新処理を開始します...")
+    print(f"新着データの解析と更新処理を開始します...")
     
-    # 3. 全ページの「Shs.」行から座標バケットに基づいて全データを正確に抽出
+    # 3. 全ページの「Shs.」行から全データを正確に抽出
     new_rows = []
     with pdfplumber.open(pdf_file) as pdf:
         for page_idx, page in enumerate(pdf.pages):
@@ -96,6 +98,7 @@ def main():
                 row_words = [w for w in words if abs(w["top"] - y) <= 3]
                 
                 code = None
+                company_name = ""
                 tot_sell = "0"
                 tot_buy = "0"
                 gen_sell = "0"
@@ -103,12 +106,19 @@ def main():
                 gen_buy = "0"
                 std_buy = "0"
                 
+                name_parts = []
                 for w in row_words:
                     x = w["x0"]
                     text = w["text"]
                     
-                    if 170 <= x < 195 and re.match(r'^\d{4}[0A-Z]?$', text):
-                        code = text[:4]
+                    # 銘柄名エリア（x < 170）
+                    if x < 170:
+                        name_parts.append(text)
+                        continue
+                    
+                    # 【英字コード対応】285A などの英字入りコードも確実にキャプチャ
+                    if 170 <= x < 210 and re.match(r'^[0-9A-Za-z]{4}[0A-Za-z]?$', text):
+                        code = text[:4].upper()
                         continue
                     
                     cleaned = clean_val(text)
@@ -128,13 +138,20 @@ def main():
                     elif 730 <= x < 780:
                         std_buy = cleaned
                 
+                if name_parts:
+                    company_name = "".join(name_parts).strip()
+
                 if code:
+                    # 1570以外のETF・投信はスキップ
+                    if code != "1570" and any(k in company_name for k in ["投信", "ETF", "受益証券"]):
+                        continue
+                        
                     new_rows.append([
-                        report_date, code, tot_sell, gen_sell, std_sell,
+                        report_date, code, company_name, tot_sell, gen_sell, std_sell,
                         tot_buy, gen_buy, std_buy
                     ])
                     
-    print(f"抽出完了: {len(new_rows)} 銘柄")
+    print(f"抽出完了: {len(new_rows)} 銘柄（英字コード含む）")
     
     unique_rows = {}
     for r in new_rows:
