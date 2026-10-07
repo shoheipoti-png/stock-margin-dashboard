@@ -120,13 +120,12 @@ def render_drag_and_drop_watchlist():
         cursor: grab;
         flex-shrink: 0;
       }}
-      .ticker-link {{
+      .ticker-info {{
         flex-grow: 1;
         display: flex;
         align-items: baseline;
         gap: 8px;
-        text-decoration: none;
-        color: inherit;
+        cursor: pointer;
         overflow: hidden;
       }}
       .ticker-code {{
@@ -143,12 +142,14 @@ def render_drag_and_drop_watchlist():
         max-width: 110px;
       }}
       .del-btn {{
-        text-decoration: none;
+        background: transparent;
+        border: none;
         color: #b0bec5;
         font-size: 15px;
         font-weight: bold;
         padding: 2px 6px;
         border-radius: 4px;
+        cursor: pointer;
         transition: color 0.15s, background 0.15s;
         margin-left: 6px;
         flex-shrink: 0;
@@ -167,6 +168,22 @@ def render_drag_and_drop_watchlist():
         const items = {items_json};
         const container = document.getElementById('watchlist');
 
+        // 親ウィンドウのURLパラメータを安全・確実に更新して遷移する関数
+        function navigateParent(paramName, paramValue) {{
+          try {{
+            const topUrl = new URL(window.top.location.href);
+            // 余計なパラメータを一度リセットして目的のパラメータをセット
+            topUrl.searchParams.delete('ticker');
+            topUrl.searchParams.delete('del_ticker');
+            topUrl.searchParams.delete('reorder');
+            topUrl.searchParams.set(paramName, paramValue);
+            window.top.location.href = topUrl.origin + topUrl.pathname + topUrl.search;
+          }} catch (e) {{
+            // フォールバック
+            window.top.location.search = '?' + paramName + '=' + encodeURIComponent(paramValue);
+          }}
+        }}
+
         function renderList() {{
           container.innerHTML = '';
           items.forEach((item, index) => {{
@@ -180,13 +197,28 @@ def render_drag_and_drop_watchlist():
 
             div.innerHTML = `
               <span class="drag-handle" title="ドラッグして並び替え">☰</span>
-              <a href="?ticker=${{code}}" target="_top" class="ticker-link" title="${{code}} ${{name}} を表示">
+              <div class="ticker-info" title="${{code}} ${{name}} を表示">
                 <span class="ticker-code">${{code}}</span>
                 <span class="ticker-name">${{name}}</span>
-              </a>
-              <a href="?del_ticker=${{code}}" target="_top" class="del-btn" title="リストから削除">✕</a>
+              </div>
+              <button class="del-btn" title="リストから削除">✕</button>
             `;
 
+            // 銘柄クリック処理
+            const tickerInfo = div.querySelector('.ticker-info');
+            tickerInfo.addEventListener('click', (e) => {{
+              e.stopPropagation();
+              navigateParent('ticker', code);
+            }});
+
+            // ✕削除ボタンクリック処理
+            const delBtn = div.querySelector('.del-btn');
+            delBtn.addEventListener('click', (e) => {{
+              e.stopPropagation();
+              navigateParent('del_ticker', code);
+            }});
+
+            // ドラッグ＆ドロップイベント
             div.addEventListener('dragstart', handleDragStart);
             div.addEventListener('dragover', handleDragOver);
             div.addEventListener('drop', handleDrop);
@@ -218,8 +250,7 @@ def render_drag_and_drop_watchlist():
             renderList();
 
             const codes = items.map(it => it.code || it).join(',');
-            // target="_top" で確実に親画面のURLを更新して並び順を永続化
-            window.top.location.href = '?reorder=' + encodeURIComponent(codes);
+            navigateParent('reorder', codes);
           }}
         }}
 
