@@ -15,8 +15,9 @@ from watchlist_manager import (
     init_watchlist_state,
     is_favorite,
     toggle_favorite,
-    move_item,
-    remove_item
+    reorder_watchlist,
+    save_watchlist,
+    render_drag_and_drop_watchlist
 )
 
 st.set_page_config(page_title="株価・信用残・機関空売りダッシュボード", layout="wide")
@@ -24,58 +25,42 @@ st.set_page_config(page_title="株価・信用残・機関空売りダッシュ�
 init_watchlist_state()
 
 # ----------------------------------------------------
-# 左側サイドバー（TradingView風ウォッチリスト）
+# URLクエリパラメータのイベント処理（銘柄選択・削除・DnD並び替え）
+# ----------------------------------------------------
+params = st.query_params
+
+# 1. 銘柄クリックによる選択
+if "ticker" in params:
+    sel = params.get("ticker")
+    st.session_state.current_ticker = clean_ticker_code(sel)
+    del st.query_params["ticker"]
+    st.rerun()
+
+# 2. ✕ボタンによる削除
+if "del_ticker" in params:
+    del_code = clean_ticker_code(params.get("del_ticker"))
+    st.session_state.watchlist = [
+        it for it in st.session_state.watchlist
+        if (it.get("code") if isinstance(it, dict) else it) != del_code
+    ]
+    save_watchlist(st.session_state.watchlist)
+    del st.query_params["del_ticker"]
+    st.rerun()
+
+# 3. ドラッグ＆ドロップによる並び替え
+if "reorder" in params:
+    new_order = params.get("reorder").split(",")
+    reorder_watchlist(new_order)
+    del st.query_params["reorder"]
+    st.rerun()
+
+# ----------------------------------------------------
+# 左側サイドバー（TradingView風 ドラッグ＆ドロップ ウォッチリスト）
 # ----------------------------------------------------
 with st.sidebar:
     st.header("📋 ウォッチリスト")
-    st.caption("クリックで即時分析 / 順番入替・削除")
-
-    # サイドバーボタンの見た目をTradingViewカード風にするCSS
-    st.markdown("""
-        <style>
-        div[data-testid="stSidebar"] div.stButton > button {
-            text-align: left;
-            border-radius: 6px;
-            padding: 4px 8px;
-            font-size: 13px;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-
-    watchlist = st.session_state.watchlist
-    if not watchlist:
-        st.info("「★ 追加」でお気に入り銘柄を登録できます")
-    else:
-        for idx, item in enumerate(watchlist):
-            c_code = item.get("code") if isinstance(item, dict) else item
-            c_name = item.get("name") if isinstance(item, dict) else ""
-            
-            # 銘柄名ボタン（大）と 操作ボタン（▲, ▼, ✕）
-            col_main, col_up, col_down, col_del = st.columns([6, 1.2, 1.2, 1.2])
-            
-            with col_main:
-                # 銘柄クリックで100%確実にメイン画面を切り替え
-                label = f"**{c_code}** {c_name[:5]}" if c_name else f"**{c_code}**"
-                if st.button(label, key=f"wl_sel_{c_code}", use_container_width=True):
-                    st.session_state.current_ticker = c_code
-                    st.rerun()
-
-            with col_up:
-                if st.button("▲", key=f"wl_up_{idx}", help="上へ移動", disabled=(idx == 0)):
-                    move_item(idx, -1)
-                    st.rerun()
-
-            with col_down:
-                if st.button("▼", key=f"wl_down_{idx}", help="下へ移動", disabled=(idx == len(watchlist) - 1)):
-                    move_item(idx, 1)
-                    st.rerun()
-
-            with col_del:
-                # ✕ボタンで100%確実に削除
-                if st.button("✕", key=f"wl_del_{idx}", help="リストから削除"):
-                    remove_item(c_code)
-                    st.rerun()
-
+    st.caption("☰をドラッグして並び替え / 銘柄クリックで分析")
+    render_drag_and_drop_watchlist()
     st.divider()
 
 # ----------------------------------------------------
