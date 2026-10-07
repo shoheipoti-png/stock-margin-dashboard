@@ -32,36 +32,38 @@ with st.sidebar:
     st.header("📋 ウォッチリスト")
     st.caption("よく見る銘柄をワンクリックで分析・並び替え")
 
-    # リスト一覧の表示
     watchlist = st.session_state.watchlist
     if not watchlist:
-        st.info("★ボタンでお気に入りを追加してください")
+        st.info("「★ 追加」ボタンでお気に入りを追加してください")
     else:
         for idx, item in enumerate(watchlist):
             c_code = item if isinstance(item, str) else item.get("code", "")
             c_name = item.get("name", "") if isinstance(item, dict) else ""
-            display_label = f"**{c_code}** {c_name}" if c_name else f"**{c_code}**"
 
-            col_btn, col_up, col_down, col_del = st.columns([6, 1.2, 1.2, 1.2])
+            # 銘柄名ボタンと操作ボタン（上移動、下移動、削除）
+            col_btn, col_up, col_down, col_del = st.columns([5.5, 1.3, 1.3, 1.3])
 
             with col_btn:
-                # 銘柄クリックでメイン画面を即切り替え
-                if st.button(f"{c_code} {c_name[:6]}", key=f"sel_{c_code}_{idx}", use_container_width=True):
+                btn_text = f"{c_code} {c_name[:5]}" if c_name else c_code
+                if st.button(btn_text, key=f"sel_{c_code}_{idx}", use_container_width=True):
                     st.session_state.current_ticker = c_code
                     st.rerun()
 
             with col_up:
-                if st.button("▲", key=f"up_{idx}", help="上へ移動", disabled=(idx == 0)):
+                # 視認性の高い絵文字アイコン（⬆️）
+                if st.button("⬆️", key=f"up_{idx}", help="上へ移動", disabled=(idx == 0)):
                     move_item(idx, -1)
                     st.rerun()
 
             with col_down:
-                if st.button("▼", key=f"down_{idx}", help="下へ移動", disabled=(idx == len(watchlist) - 1)):
+                # 視認性の高い絵文字アイコン（⬇️）
+                if st.button("⬇️", key=f"down_{idx}", help="下へ移動", disabled=(idx == len(watchlist) - 1)):
                     move_item(idx, 1)
                     st.rerun()
 
             with col_del:
-                if st.button("✕", key=f"del_{idx}", help="リストから削除"):
+                # 視認性の高いゴミ箱アイコン（🗑️）
+                if st.button("🗑️", key=f"del_{idx}", help="リストから削除"):
                     remove_item(idx)
                     st.rerun()
 
@@ -102,16 +104,17 @@ if ticker:
     company_name = get_company_name_from_yahoo_japan(clean_target)
     stock_prices = get_stock_prices(clean_target)
 
-    # 2. 銘柄ヘッダーとお気に入り（★）ボタン
-    col_title, col_fav = st.columns([8, 2])
+    # 2. 銘柄ヘッダーとお気に入りボタン（見出しのすぐ右隣にコンパクト配置）
     title_label = f"{clean_target}（{company_name}）" if company_name else clean_target
-    
+    fav_status = is_favorite(clean_target)
+    btn_label = "★ 削除" if fav_status else "★ 追加"
+
+    col_title, col_fav, col_empty = st.columns([0.48, 0.14, 0.38])
     with col_title:
         st.subheader(f"{title_label} のデータ分析")
-        
     with col_fav:
-        fav_status = is_favorite(clean_target)
-        btn_label = "★ お気に入り解除" if fav_status else "☆ お気に入り追加"
+        # ボタンの縦位置を見出しの高さに自然にフィットさせる
+        st.write("")
         if st.button(btn_label, use_container_width=True):
             toggle_favorite(clean_target, company_name)
             st.rerun()
