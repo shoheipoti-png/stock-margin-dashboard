@@ -27,7 +27,7 @@ init_watchlist_state()
 # ----------------------------------------------------
 with st.sidebar:
     st.header("📋 ウォッチリスト")
-    st.caption("ワンクリック分析 / ✕で削除 / ドラッグ並び替え")
+    st.caption("クリックで即時分析 / ✕で削除")
     render_watchlist_ui()
     st.divider()
 
