@@ -33,18 +33,20 @@ def init_watchlist_state():
         st.session_state.watchlist = load_watchlist()
 
 def toggle_favorite(code, name=""):
-    """お気に入りの追加 / 削除"""
+    """お気に入りの追加 / 削除（新規追加は末尾に追加）"""
     code_str = str(code).strip().upper()
     current = st.session_state.watchlist
     
     existing_codes = [item.get("code") if isinstance(item, dict) else item for item in current]
     
     if code_str in existing_codes:
+        # 削除
         st.session_state.watchlist = [
             item for item in current 
             if (item.get("code") if isinstance(item, dict) else item) != code_str
         ]
     else:
+        # 末尾に追加
         display_name = name if name else code_str
         st.session_state.watchlist.append({"code": code_str, "name": display_name})
         
@@ -71,7 +73,7 @@ def move_item_by_code(code, direction):
     items = st.session_state.watchlist
     idx = -1
     for i, it in enumerate(items):
-        c = it.get("code") if isinstance(it, dict) else it
+        c = it.get("code") if isinstance(item, dict) else it
         if c == code:
             idx = i
             break
@@ -83,16 +85,15 @@ def move_item_by_code(code, direction):
         save_watchlist(items)
 
 def render_watchlist_ui():
-    """TradingView風ウォッチリスト（確実動作版）"""
+    """TradingView風ウォッチリスト（一括テキスト編集 & 上下移動対応）"""
     watchlist = st.session_state.watchlist
     if not watchlist:
         st.info("「★ 追加」でお気に入り銘柄を登録できます")
         return
 
-    # サイドバーのボタンデザインをTradingView風カードに調整
+    # サイドバーのボタンデザインを調整
     st.markdown("""
         <style>
-        /* 銘柄カードボタン */
         div[data-testid="stSidebar"] div.row-widget.stButton > button {
             text-align: left !important;
             padding: 6px 10px !important;
@@ -111,7 +112,7 @@ def render_watchlist_ui():
         </style>
     """, unsafe_allow_html=True)
 
-    # 銘柄リスト
+    # 1. 銘柄一覧（クリック切り替え & ✕削除）
     for idx, item in enumerate(watchlist):
         c_code = item.get("code") if isinstance(item, dict) else item
         c_name = item.get("name") if isinstance(item, dict) else ""
@@ -119,35 +120,75 @@ def render_watchlist_ui():
         col_main, col_del = st.columns([0.82, 0.18])
         
         with col_main:
-            # 銘柄クリックで確実に切り替え
             label = f"**{c_code}**  {c_name[:5]}" if c_name else f"**{c_code}**"
             if st.button(label, key=f"btn_sel_{c_code}_{idx}", use_container_width=True):
                 st.session_state.current_ticker = c_code
                 st.rerun()
 
         with col_del:
-            # ✕ボタンで確実に削除
             if st.button("✕", key=f"btn_del_{c_code}_{idx}", help=f"{c_code} を削除", use_container_width=True):
                 remove_item(c_code)
                 st.rerun()
 
     st.markdown("---")
 
-    # シンプルで迷わない並び替えツール
-    with st.expander("↕️ 並び順の変更", expanded=False):
+    # 2. 解決策C：テキストで一括並び替え・編集
+    with st.expander("📝 テキストで一括並び替え", expanded=False):
+        st.caption("行をカット＆ペーストで並び替えて「並び順を反映」を押してください")
+        
+        # 1行ずつ "コード 社名" の形式で作成
+        lines = []
+        for it in watchlist:
+            code = it.get("code") if isinstance(it, dict) else it
+            name = it.get("name", "") if isinstance(it, dict) else ""
+            lines.append(f"{code} {name}".strip())
+        current_text = "\n".join(lines)
+        
+        edited_text = st.text_area("ウォッチリスト一覧（編集可）", value=current_text, height=180, key="batch_reorder_textarea")
+        
+        if st.button("並び順を反映", key="btn_apply_batch", use_container_width=True):
+            new_lines = [l.strip() for l in edited_text.splitlines() if l.strip()]
+            new_watchlist = []
+            
+            # 既存の銘柄情報をコードキーで引けるように辞書化
+            item_map = {
+                (it.get("code") if isinstance(it, dict) else it): it 
+                for it in watchlist
+            }
+            
+            for line in new_lines:
+                parts = line.split(maxsplit=1)
+                c = parts[0].upper()
+                n = parts[1] if len(parts) > 1 else ""
+                
+                if c in item_map:
+                    # 既存銘柄（元の名前情報を維持）
+                    orig = item_map[c]
+                    orig_name = orig.get("name") if isinstance(orig, dict) else n
+                    new_watchlist.append({"code": c, "name": orig_name})
+                else:
+                    # テキスト編集で新しく追加されたコードの場合
+                    new_watchlist.append({"code": c, "name": n})
+            
+            st.session_state.watchlist = new_watchlist
+            save_watchlist(new_watchlist)
+            st.rerun()
+
+    # 3. 既存の1銘柄ずつの上下移動（そのまま残しています）
+    with st.expander("↕️ 単品で並び順の微調整", expanded=False):
         options = [
             f"{it.get('code', '')} {it.get('name', '')}".strip() 
             for it in watchlist
         ]
-        selected_target = st.selectbox("移動する銘柄を選択", options, key="reorder_target_select")
+        selected_target = st.selectbox("微調整する銘柄を選択", options, key="reorder_target_select")
         if selected_target:
             target_code = selected_target.split()[0]
             col_up, col_down = st.columns(2)
             with col_up:
-                if st.button("⬆️ 上へ移動", use_container_width=True, key="btn_move_up"):
+                if st.button("⬆️ 上へ", use_container_width=True, key="btn_move_up"):
                     move_item_by_code(target_code, -1)
                     st.rerun()
             with col_down:
-                if st.button("⬇️ 下へ移動", use_container_width=True, key="btn_move_down"):
+                if st.button("⬇️ 下へ", use_container_width=True, key="btn_move_down"):
                     move_item_by_code(target_code, 1)
                     st.rerun()
