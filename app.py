@@ -184,7 +184,11 @@ if ticker:
             vol_colors.append("rgba(189, 189, 189, 0.30)")
 
     fig = render_combined_chart(graph_dates, buy_shares_list, sell_shares_list, inst_shares_list, vol_list, vol_colors, title_label)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(
+        fig, 
+        use_container_width=True, 
+        config={'scrollZoom': False, 'displayModeBar': False}
+    )
 
     # 6. 機関一覧とHTMLテーブルの表示
     if institutions:
