@@ -47,6 +47,7 @@ def render_combined_chart(graph_dates, buy_shares, sell_shares, inst_shares, vol
 
     fig.update_layout(
         title=f"{title_label} 信用残・機関空売り・出来高推移（同一株数軸）",
+        dragmode=False,  # スマホ操作時の誤ズーム枠発生を防止
         hovermode="x unified",
         margin=dict(l=40, r=40, t=50, b=30),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
