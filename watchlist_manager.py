@@ -1,3 +1,5 @@
+import os
+import json
 import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
@@ -11,27 +13,24 @@ DEFAULT_WATCHLIST = [
 
 @st.cache_resource
 def get_gspread_client():
-    """GSpreadクライアントの初期化（複数のSecretsキー名に自動対応）"""
+    """data_loader.pyと同一の方式でGSpreadクライアントを初期化"""
     try:
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
-        ]
-        
-        # 既存のSecrets構造（gspread_credentials, gcp_service_account, または直下）を柔軟に検出
-        creds_dict = None
-        if "gspread_credentials" in st.secrets:
-            creds_dict = dict(st.secrets["gspread_credentials"])
-        elif "gcp_service_account" in st.secrets:
-            creds_dict = dict(st.secrets["gcp_service_account"])
-        elif "type" in st.secrets and st.secrets.get("type") == "service_account":
-            creds_dict = dict(st.secrets)
-            
-        if not creds_dict:
+        creds_raw = st.secrets.get("GCP_SERVICE_ACCOUNT_KEY") or os.environ.get("GCP_SERVICE_ACCOUNT_KEY")
+        if not creds_raw:
             return None
-            
-        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-        return gspread.authorize(creds)
+        if isinstance(creds_raw, dict):
+            creds_dict = creds_raw
+        elif hasattr(creds_raw, "to_dict"):
+            creds_dict = creds_raw.to_dict()
+        else:
+            creds_dict = json.loads(str(creds_raw).strip())
+
+        scope = [
+            'https://www.googleapis.com/auth/spreadsheets',
+            'https://www.googleapis.com/auth/drive'
+        ]
+        credentials = Credentials.from_service_account_info(creds_dict, scopes=scope)
+        return gspread.authorize(credentials)
     except Exception as e:
         return None
 
@@ -40,19 +39,17 @@ def get_watchlist_worksheet():
     try:
         sheet_id = st.secrets.get("WATCHLIST_SPREADSHEET_ID")
         if not sheet_id:
-            # Secretsに未設定の場合のフォールバック
             sheet_id = "1ntZ0eWV59MK88iDJSMDEiuyZOaghWnOjUqAn36G8Qsg"
             
-        gc = get_gspread_client()
-        if not gc:
+        client = get_gspread_client()
+        if not client:
             return None
-        sh = gc.open_by_key(sheet_id)
-        return sh.get_worksheet(0)
+        return client.open_by_key(sheet_id).sheet1
     except Exception:
         return None
 
 def load_watchlist_from_sheet():
-    """スプレッドシートから読み込み"""
+    """スプレッドシートからウォッチリストを取得"""
     try:
         ws = get_watchlist_worksheet()
         if not ws:
@@ -60,7 +57,7 @@ def load_watchlist_from_sheet():
 
         all_values = ws.get_all_values()
         
-        # シートが空、または見出しだけの場合は初期データを投入
+        # シートが空、またはヘッダー行しかない場合
         if not all_values or len(all_values) <= 1:
             save_watchlist_to_sheet(DEFAULT_WATCHLIST)
             return DEFAULT_WATCHLIST
@@ -79,7 +76,7 @@ def load_watchlist_from_sheet():
         return DEFAULT_WATCHLIST
 
 def save_watchlist_to_sheet(items):
-    """スプレッドシートへ全件上書き保存"""
+    """スプレッドシートへ全件保存（A列: code, B列: name）"""
     try:
         ws = get_watchlist_worksheet()
         if not ws:
