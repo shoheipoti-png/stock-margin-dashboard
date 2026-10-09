@@ -47,13 +47,14 @@ def render_combined_chart(graph_dates, buy_shares, sell_shares, inst_shares, vol
 
     fig.update_layout(
         title=f"{title_label} 信用残・機関空売り・出来高推移（同一株数軸）",
-        dragmode=False,  # スマホ操作時の誤ズーム枠発生を防止
+        dragmode=False,  # ドラッグ操作（四角いズーム枠）を完全に無効化
         hovermode="x unified",
         margin=dict(l=40, r=40, t=50, b=30),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         template="plotly_white",
         bargap=0.35
     )
-    fig.update_xaxes(type='category', title_text="日付")
-    fig.update_yaxes(title_text="株数（出来高 / 信用残）")
+    # 軸のズーム・移動も固定（誤タッチによる意図しない拡大を防止）
+    fig.update_xaxes(type='category', title_text="日付", fixedrange=True)
+    fig.update_yaxes(title_text="株数（出来高 / 信用残）", fixedrange=True)
     return fig
