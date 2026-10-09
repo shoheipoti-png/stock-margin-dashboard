@@ -10,14 +10,13 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 
 # -------------------------------------------------------------------
-# テスト専用設定（本番環境には一切影響しません）
+# テスト専用設定
 # -------------------------------------------------------------------
 TEST_SPREADSHEET_ID = "1jHWbC62ZVRXOcgOaF5Tmn6FQEsERx7LVZUOmOuh-6fM"
 BASE_URL = "https://www.jpx.co.jp"
 TARGET_PAGE_URL = "https://www.jpx.co.jp/markets/statistics-equities/margin/01.html"
 
 def get_latest_pdf_url():
-    """JPXサイトから最新の信用取引残高PDFのURLを取得"""
     headers = {"User-Agent": "Mozilla/5.0"}
     res = requests.get(TARGET_PAGE_URL, headers=headers)
     res.raise_for_status()
@@ -34,7 +33,6 @@ def get_latest_pdf_url():
     return pdf_link
 
 def clean_val(text):
-    """カンマや記号を除去して数値に変換"""
     if not text:
         return 0
     clean = re.sub(r"[,\s]", "", text)
@@ -43,15 +41,12 @@ def clean_val(text):
     return 0
 
 def parse_pdf_enhanced(pdf_path):
-    """
-    大桁銘柄・巨大前日比に対応した全ページ強化型パースロジック
-    """
     data = []
     report_date = None
 
     with pdfplumber.open(pdf_path) as pdf:
         for page_idx, page in enumerate(pdf.pages):
-            words = page.extract_words(x_tolerance=2, y_tolerance=2)
+            words = page.extract_words(x_tolerance=3, y_tolerance=3)
             if not words:
                 continue
 
@@ -68,84 +63,73 @@ def parse_pdf_enhanced(pdf_path):
                         y, m, d = match_slash.groups()
                         report_date = f"{int(y):04d}-{int(m):02d}-{int(d):02d}"
 
-            # Y座標ごとにテキストをグループ化（行の再構築）
-            rows = {}
+            # 銘柄コード（左側 x0 < 120 にある4桁英数字）を全探索
+            code_tokens = []
             for w in words:
-                top_key = round(w["top"], 1)
-                matched_key = None
-                for k in rows.keys():
-                    if abs(k - top_key) <= 3.0:
-                        matched_key = k
-                        break
-                if matched_key is None:
-                    matched_key = top_key
-                    rows[matched_key] = []
-                rows[matched_key].append(w)
-
-            # 各行の解析
-            for y_coord, row_words in sorted(rows.items(), key=lambda x: x[0]):
-                row_words = sorted(row_words, key=lambda w: w["x0"])
-                
-                # 銘柄コード（4桁数字または数字3桁+英字1文字）の検出
-                # ※表の左端付近（x0 < 130）に存在するコードを確実に捕捉
-                code_word = None
-                code_idx = -1
-                for idx, w in enumerate(row_words):
+                if w["x0"] < 120:
                     text = w["text"].strip()
-                    if w["x0"] < 130 and re.match(r"^(\d{4}|\d{3}[A-Z])$", text):
-                        code_word = text
-                        code_idx = idx
-                        break
-                
-                if not code_word:
-                    continue
+                    m = re.match(r"^(\d{4}|\d{3}[A-Z])", text)
+                    if m:
+                        code_tokens.append({
+                            "code": m.group(1),
+                            "top": w["top"],
+                            "bottom": w["bottom"]
+                        })
 
-                # 銘柄コード以降のトークンを解析
-                tokens_after = row_words[code_idx + 1:]
-                
-                # 前日比の▲記号を事前判定
+            if not code_tokens:
+                continue
+
+            # 銘柄コードをY座標順にソート
+            code_tokens = sorted(code_tokens, key=lambda x: x["top"])
+
+            # 各銘柄コードの行範囲を決定して数値を抽出
+            for i, ctok in enumerate(code_tokens):
+                code = ctok["code"]
+                y_top = ctok["top"] - 4.0
+                if i + 1 < len(code_tokens):
+                    y_bottom = code_tokens[i+1]["top"] - 4.0
+                else:
+                    y_bottom = ctok["bottom"] + 15.0
+
+                # この銘柄の行範囲に存在するワードを収集
+                row_words = [w for w in words if y_top <= w["top"] < y_bottom and w["x0"] > 120]
+
+                # 数字トークンを分類（前日比の▲記号を事前判定）
                 num_tokens = []
-                for w in tokens_after:
+                for w in row_words:
                     t = w["text"].strip()
                     if re.search(r"\d", t) and "%" not in t:
                         is_diff = ("▲" in t) or ("-" in t and not t.isdigit())
                         num_tokens.append({
                             "text": t,
                             "x0": w["x0"],
-                            "x1": w["x1"],
                             "is_diff": is_diff,
                             "val": clean_val(t)
                         })
 
-                # 残高列のみを対象（前日比を除外）
+                # 残高列のみ（前日比を除外）
                 balance_tokens = [tok for tok in num_tokens if not tok["is_diff"]]
 
-                # 各カラムの帯域（JPXレイアウト完全対応）
-                # 1. 売残 合計 (x0: 170〜280)
-                tot_sell_cands = [tok["val"] for tok in balance_tokens if 170 <= tok["x0"] < 280]
+                # 各列の数値を抽出（大桁対応の判定幅）
+                tot_sell_cands = [tok["val"] for tok in balance_tokens if 160 <= tok["x0"] < 280]
                 tot_sell = tot_sell_cands[0] if tot_sell_cands else 0
 
-                # 2. 売残 一般 (x0: 380〜460)
-                gen_sell_cands = [tok["val"] for tok in balance_tokens if 380 <= tok["x0"] < 460]
+                gen_sell_cands = [tok["val"] for tok in balance_tokens if 380 <= tok["x0"] < 470]
                 gen_sell = gen_sell_cands[0] if gen_sell_cands else 0
 
-                # 3. 売残 制度 (x0: 480〜560)
-                std_sell_cands = [tok["val"] for tok in balance_tokens if 480 <= tok["x0"] < 560]
+                std_sell_cands = [tok["val"] for tok in balance_tokens if 470 <= tok["x0"] < 560]
                 std_sell = std_sell_cands[0] if std_sell_cands else 0
 
-                # 4. 買残 合計 (x0: 270〜390：大桁銘柄のはみ出しにも完全対応)
                 tot_buy_cands = [tok["val"] for tok in balance_tokens if 270 <= tok["x0"] < 390]
                 tot_buy = tot_buy_cands[0] if tot_buy_cands else 0
 
-                # 5. 買残 一般 (x0: 580〜680)
-                gen_buy_cands = [tok["val"] for tok in balance_tokens if 580 <= tok["x0"] < 680]
+                gen_buy_cands = [tok["val"] for tok in balance_tokens if 570 <= tok["x0"] < 680]
                 gen_buy = gen_buy_cands[0] if gen_buy_cands else 0
 
-                # 6. 買残 制度 (x0: 700〜810)
-                std_buy_cands = [tok["val"] for tok in balance_tokens if 700 <= tok["x0"] < 810]
+                std_buy_cands = [tok["val"] for tok in balance_tokens if 680 <= tok["x0"] < 800]
                 std_buy = std_buy_cands[0] if std_buy_cands else 0
 
-                # 数学的自己検証・修復
+                # 数学的自己検証・補正
                 calc_tot_sell = gen_sell + std_sell
                 if (tot_sell == 0 and calc_tot_sell > 0) or (abs(tot_sell - calc_tot_sell) > 100 and calc_tot_sell > 0):
                     tot_sell = calc_tot_sell
@@ -155,7 +139,7 @@ def parse_pdf_enhanced(pdf_path):
                     tot_buy = calc_tot_buy
 
                 data.append({
-                    "code": code_word,
+                    "code": code,
                     "sell_total": tot_sell,
                     "sell_general": gen_sell,
                     "sell_standard": std_sell,
@@ -167,7 +151,6 @@ def parse_pdf_enhanced(pdf_path):
     return report_date, data
 
 def update_test_sheet(report_date, records):
-    """テスト用スプレッドシートへ書き込み"""
     sa_key_json = os.environ.get("GCP_SERVICE_ACCOUNT_KEY")
     if not sa_key_json:
         raise ValueError("環境変数 GCP_SERVICE_ACCOUNT_KEY が設定されていません。")
@@ -194,7 +177,7 @@ def update_test_sheet(report_date, records):
             r["buy_standard"]
         ])
 
-    print(f"テスト用シートをクリアして全 {len(rows)-1} 件のデータを書き込み中...")
+    print(f"テスト用シートへ全 {len(rows)-1} 件のデータを書き込み中...")
     sheet.clear()
     sheet.update(range_name="A1", values=rows)
     print("テスト用スプレッドシートの更新が完了しました！")
@@ -209,16 +192,15 @@ def main():
     with open(local_pdf, "wb") as f:
         f.write(res.content)
 
-    print("PDFパース中（全ページ強化型ロジック適用）...")
+    print("PDFパース中（全銘柄抽出＆大桁対応）...")
     report_date, records = parse_pdf_enhanced(local_pdf)
     print(f"申込日: {report_date}, 抽出件数: {len(records)} 件")
 
-    # 主要銘柄の抽出確認
+    # 主要銘柄の抽出確認ログ
     for r in records:
         if r["code"] in ["285A", "9432", "7011", "6526"]:
             print(f"検証ログ [{r['code']}]: 売残合計={r['sell_total']:,}, 買残合計={r['buy_total']:,} (一般={r['buy_general']:,}, 制度={r['buy_standard']:,})")
 
-    # テスト用スプレッドシートへ書き込み
     update_test_sheet(report_date, records)
     print("=== テスト完了 ===")
 
