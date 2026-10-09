@@ -14,7 +14,6 @@ from urllib.parse import urljoin
 # -------------------------------------------------------------------
 TEST_SPREADSHEET_ID = "1jHWbC62ZVRXOcgOaF5Tmn6FQEsERx7LVZUOmOuh-6fM"
 BASE_URL = "https://www.jpx.co.jp"
-# 画像3枚目の正しいJPX公表ページURL
 TARGET_PAGE_URL = "https://www.jpx.co.jp/markets/statistics-equities/margin/01.html"
 
 def get_latest_pdf_url():
@@ -45,7 +44,7 @@ def clean_val(text):
 
 def parse_pdf_enhanced(pdf_path):
     """
-    大桁銘柄・巨大前日比に対応した強化型パースロジック
+    大桁銘柄・巨大前日比に対応した全ページ強化型パースロジック
     """
     data = []
     report_date = None
@@ -88,11 +87,12 @@ def parse_pdf_enhanced(pdf_path):
                 row_words = sorted(row_words, key=lambda w: w["x0"])
                 
                 # 銘柄コード（4桁数字または数字3桁+英字1文字）の検出
+                # ※表の左端付近（x0 < 130）に存在するコードを確実に捕捉
                 code_word = None
                 code_idx = -1
                 for idx, w in enumerate(row_words):
                     text = w["text"].strip()
-                    if w["x0"] < 90 and re.match(r"^(\d{4}|\d{3}[A-Z])$", text):
+                    if w["x0"] < 130 and re.match(r"^(\d{4}|\d{3}[A-Z])$", text):
                         code_word = text
                         code_idx = idx
                         break
@@ -103,7 +103,7 @@ def parse_pdf_enhanced(pdf_path):
                 # 銘柄コード以降のトークンを解析
                 tokens_after = row_words[code_idx + 1:]
                 
-                # 前日比の▲記号を事前識別
+                # 前日比の▲記号を事前判定
                 num_tokens = []
                 for w in tokens_after:
                     t = w["text"].strip()
@@ -120,28 +120,28 @@ def parse_pdf_enhanced(pdf_path):
                 # 残高列のみを対象（前日比を除外）
                 balance_tokens = [tok for tok in num_tokens if not tok["is_diff"]]
 
-                # 各カラムの帯域
-                # 1. 売残 合計
+                # 各カラムの帯域（JPXレイアウト完全対応）
+                # 1. 売残 合計 (x0: 170〜280)
                 tot_sell_cands = [tok["val"] for tok in balance_tokens if 170 <= tok["x0"] < 280]
                 tot_sell = tot_sell_cands[0] if tot_sell_cands else 0
 
-                # 2. 売残 一般
+                # 2. 売残 一般 (x0: 380〜460)
                 gen_sell_cands = [tok["val"] for tok in balance_tokens if 380 <= tok["x0"] < 460]
                 gen_sell = gen_sell_cands[0] if gen_sell_cands else 0
 
-                # 3. 売残 制度
+                # 3. 売残 制度 (x0: 480〜560)
                 std_sell_cands = [tok["val"] for tok in balance_tokens if 480 <= tok["x0"] < 560]
                 std_sell = std_sell_cands[0] if std_sell_cands else 0
 
-                # 4. 買残 合計（8〜9桁の大規模銘柄でも左側を確実に捕捉）
+                # 4. 買残 合計 (x0: 270〜390：大桁銘柄のはみ出しにも完全対応)
                 tot_buy_cands = [tok["val"] for tok in balance_tokens if 270 <= tok["x0"] < 390]
                 tot_buy = tot_buy_cands[0] if tot_buy_cands else 0
 
-                # 5. 買残 一般
+                # 5. 買残 一般 (x0: 580〜680)
                 gen_buy_cands = [tok["val"] for tok in balance_tokens if 580 <= tok["x0"] < 680]
                 gen_buy = gen_buy_cands[0] if gen_buy_cands else 0
 
-                # 6. 買残 制度
+                # 6. 買残 制度 (x0: 700〜810)
                 std_buy_cands = [tok["val"] for tok in balance_tokens if 700 <= tok["x0"] < 810]
                 std_buy = std_buy_cands[0] if std_buy_cands else 0
 
@@ -168,9 +168,9 @@ def parse_pdf_enhanced(pdf_path):
 
 def update_test_sheet(report_date, records):
     """テスト用スプレッドシートへ書き込み"""
-    sa_key_json = os.environ.get("GCP_SA_KEY")
+    sa_key_json = os.environ.get("GCP_SERVICE_ACCOUNT_KEY")
     if not sa_key_json:
-        raise ValueError("環境変数 GCP_SA_KEY が設定されていません。")
+        raise ValueError("環境変数 GCP_SERVICE_ACCOUNT_KEY が設定されていません。")
 
     creds_dict = json.loads(sa_key_json)
     scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
@@ -209,7 +209,7 @@ def main():
     with open(local_pdf, "wb") as f:
         f.write(res.content)
 
-    print("PDFパース中（強化型ロジック適用）...")
+    print("PDFパース中（全ページ強化型ロジック適用）...")
     report_date, records = parse_pdf_enhanced(local_pdf)
     print(f"申込日: {report_date}, 抽出件数: {len(records)} 件")
 
