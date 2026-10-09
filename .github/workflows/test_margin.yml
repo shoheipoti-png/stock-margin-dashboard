@@ -1,7 +1,7 @@
 name: Test Margin Data Parser
 
 on:
-  workflow_dispatch: # Actionsタブから手動でいつでもテスト実行可能
+  workflow_dispatch: # Actionsタブから手動で実行可能
 
 jobs:
   test_run:
@@ -23,6 +23,6 @@ jobs:
 
       - name: Run test parser
         env:
-          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+          GCP_SERVICE_ACCOUNT_KEY: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
         run: |
           python test_parser.py
