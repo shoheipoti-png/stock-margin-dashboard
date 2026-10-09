@@ -5,7 +5,7 @@ import requests
 import pdfplumber
 import pandas as pd
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 
@@ -14,7 +14,8 @@ from urllib.parse import urljoin
 # -------------------------------------------------------------------
 TEST_SPREADSHEET_ID = "1jHWbC62ZVRXOcgOaF5Tmn6FQEsERx7LVZUOmOuh-6fM"
 BASE_URL = "https://www.jpx.co.jp"
-TARGET_PAGE_URL = "https://www.jpx.co.jp/markets/equities/margin-trading/individual/01.html"
+# 画像3枚目の正しいJPX公表ページURL
+TARGET_PAGE_URL = "https://www.jpx.co.jp/markets/statistics-equities/margin/01.html"
 
 def get_latest_pdf_url():
     """JPXサイトから最新の信用取引残高PDFのURLを取得"""
@@ -55,7 +56,7 @@ def parse_pdf_enhanced(pdf_path):
             if not words:
                 continue
 
-            # 申込現在日の取得（1ページ目などから抽出）
+            # 申込現在日の取得
             if not report_date:
                 full_text = page.extract_text() or ""
                 match = re.search(r"(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日", full_text)
@@ -87,7 +88,6 @@ def parse_pdf_enhanced(pdf_path):
                 row_words = sorted(row_words, key=lambda w: w["x0"])
                 
                 # 銘柄コード（4桁数字または数字3桁+英字1文字）の検出
-                # JPXのコード列は通常ページ左端（x0 < 90）に配置
                 code_word = None
                 code_idx = -1
                 for idx, w in enumerate(row_words):
@@ -103,11 +103,10 @@ def parse_pdf_enhanced(pdf_path):
                 # 銘柄コード以降のトークンを解析
                 tokens_after = row_words[code_idx + 1:]
                 
-                # 数字および記号トークンの抽出（前日比の▲記号を事前判定）
+                # 前日比の▲記号を事前識別
                 num_tokens = []
                 for w in tokens_after:
                     t = w["text"].strip()
-                    # 記号「▲」単体や「-」単体でない、かつ数字を含むもの
                     if re.search(r"\d", t) and "%" not in t:
                         is_diff = ("▲" in t) or ("-" in t and not t.isdigit())
                         num_tokens.append({
@@ -118,35 +117,35 @@ def parse_pdf_enhanced(pdf_path):
                             "val": clean_val(t)
                         })
 
-                # 残高列のみを対象（前日比フラグが付いているものを除外）
+                # 残高列のみを対象（前日比を除外）
                 balance_tokens = [tok for tok in num_tokens if not tok["is_diff"]]
 
-                # 各カラムの帯域（大桁対応 & 前日比誤認防止）
-                # 1. 売残 合計 (x0: 170〜280)
+                # 各カラムの帯域
+                # 1. 売残 合計
                 tot_sell_cands = [tok["val"] for tok in balance_tokens if 170 <= tok["x0"] < 280]
                 tot_sell = tot_sell_cands[0] if tot_sell_cands else 0
 
-                # 2. 売残 一般 (x0: 380〜460)
+                # 2. 売残 一般
                 gen_sell_cands = [tok["val"] for tok in balance_tokens if 380 <= tok["x0"] < 460]
                 gen_sell = gen_sell_cands[0] if gen_sell_cands else 0
 
-                # 3. 売残 制度 (x0: 480〜560)
+                # 3. 売残 制度
                 std_sell_cands = [tok["val"] for tok in balance_tokens if 480 <= tok["x0"] < 560]
                 std_sell = std_sell_cands[0] if std_sell_cands else 0
 
-                # 4. 買残 合計 (x0: 270〜390：8〜9桁の大規模銘柄でも左側を確実に捕捉)
+                # 4. 買残 合計（8〜9桁の大規模銘柄でも左側を確実に捕捉）
                 tot_buy_cands = [tok["val"] for tok in balance_tokens if 270 <= tok["x0"] < 390]
                 tot_buy = tot_buy_cands[0] if tot_buy_cands else 0
 
-                # 5. 買残 一般 (x0: 580〜680)
+                # 5. 買残 一般
                 gen_buy_cands = [tok["val"] for tok in balance_tokens if 580 <= tok["x0"] < 680]
                 gen_buy = gen_buy_cands[0] if gen_buy_cands else 0
 
-                # 6. 買残 制度 (x0: 700〜810)
+                # 6. 買残 制度
                 std_buy_cands = [tok["val"] for tok in balance_tokens if 700 <= tok["x0"] < 810]
                 std_buy = std_buy_cands[0] if std_buy_cands else 0
 
-                # 数学的自己検証・補正（内訳合計との完全一致を担保）
+                # 数学的自己検証・修復
                 calc_tot_sell = gen_sell + std_sell
                 if (tot_sell == 0 and calc_tot_sell > 0) or (abs(tot_sell - calc_tot_sell) > 100 and calc_tot_sell > 0):
                     tot_sell = calc_tot_sell
@@ -174,9 +173,9 @@ def update_test_sheet(report_date, records):
         raise ValueError("環境変数 GCP_SA_KEY が設定されていません。")
 
     creds_dict = json.loads(sa_key_json)
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    client = gspread.authorize(creds)
+    scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    credentials = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+    client = gspread.authorize(credentials)
 
     sheet = client.open_by_key(TEST_SPREADSHEET_ID).sheet1
 
@@ -197,7 +196,7 @@ def update_test_sheet(report_date, records):
 
     print(f"テスト用シートをクリアして全 {len(rows)-1} 件のデータを書き込み中...")
     sheet.clear()
-    sheet.update("A1", rows)
+    sheet.update(range_name="A1", values=rows)
     print("テスト用スプレッドシートの更新が完了しました！")
 
 def main():
@@ -214,7 +213,7 @@ def main():
     report_date, records = parse_pdf_enhanced(local_pdf)
     print(f"申込日: {report_date}, 抽出件数: {len(records)} 件")
 
-    # 特定銘柄（キオクシア等）の抽出チェックをログに出力
+    # 主要銘柄の抽出確認
     for r in records:
         if r["code"] in ["285A", "9432", "7011", "6526"]:
             print(f"検証ログ [{r['code']}]: 売残合計={r['sell_total']:,}, 買残合計={r['buy_total']:,} (一般={r['buy_general']:,}, 制度={r['buy_standard']:,})")
