@@ -64,29 +64,42 @@ def format_pct(num):
         return "-", "#666"
 
 def render_institution_summary_html(institutions, title_label):
-    """上部の機関参加一覧ボックス（スマホのダークモードでも白背景・黒文字を固定）"""
+    """上部の機関参加一覧ボックス（スマホのダークモード強制反転をブロック）"""
     if not institutions:
         return ""
     
     rows_html = ""
     for idx, inst in enumerate(institutions, 1):
         rows_html += f"""
-            <tr style="background-color: #ffffff; color: #1a1a1a;">
-                <td style="padding: 5px 8px; border: 1px solid #ddd; text-align: center; font-weight: bold; color: #444; background-color: #f9f9f9; width: 60px;">{idx}</td>
-                <td style="padding: 5px 10px; border: 1px solid #ddd; text-align: left; font-size: 13px; color: #1a1a1a; background-color: #ffffff;">{inst}</td>
+            <tr style="background-color: #ffffff !important; color: #1a1a1a !important;">
+                <td style="padding: 6px 8px; border: 1px solid #ddd; text-align: center; font-weight: bold; color: #333333 !important; background-color: #f7f9fa !important; width: 50px;">{idx}</td>
+                <td style="padding: 6px 12px; border: 1px solid #ddd; text-align: left; font-size: 13px; font-weight: 500; color: #1a1a1a !important; background-color: #ffffff !important;">{inst}</td>
             </tr>
         """
         
     html = f"""
-    <div style="margin-bottom: 12px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #ffffff; border: 1px solid #ddd; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
-        <div style="background-color: #262730; color: #ffffff; padding: 7px 12px; font-weight: bold; font-size: 13px;">
+    <!DOCTYPE html>
+    <html>
+    <head>
+    <meta charset="utf-8">
+    <meta name="color-scheme" content="light">
+    <style>
+      :root {{ color-scheme: light; }}
+      body {{ margin: 0; padding: 0; background-color: #ffffff !important; color: #1a1a1a !important; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }}
+      table {{ width: 100%; border-collapse: collapse; background-color: #ffffff !important; }}
+      th, td {{ color: #1a1a1a !important; }}
+    </style>
+    </head>
+    <body>
+    <div style="margin-bottom: 8px; border: 1px solid #d0d7de; border-radius: 6px; overflow: hidden; background-color: #ffffff !important;">
+        <div style="background-color: #262730 !important; color: #ffffff !important; padding: 7px 12px; font-weight: bold; font-size: 13px;">
             🏢 {title_label} 空売り参加機関一覧 ({len(institutions)}社)
         </div>
-        <table style="width: 100%; border-collapse: collapse; font-size: 12px; background-color: #ffffff;">
+        <table>
             <thead>
-                <tr style="background-color: #f0f2f6; color: #333;">
-                    <th style="padding: 5px 8px; border: 1px solid #ddd; width: 60px; text-align: center;">No.</th>
-                    <th style="padding: 5px 10px; border: 1px solid #ddd; text-align: left;">空売り機関名</th>
+                <tr style="background-color: #f0f2f6 !important; color: #333333 !important;">
+                    <th style="padding: 5px 8px; border: 1px solid #ddd; width: 50px; text-align: center; font-size: 12px; color: #333333 !important;">No.</th>
+                    <th style="padding: 5px 12px; border: 1px solid #ddd; text-align: left; font-size: 12px; color: #333333 !important;">空売り機関名</th>
                 </tr>
             </thead>
             <tbody>
@@ -94,33 +107,35 @@ def render_institution_summary_html(institutions, title_label):
             </tbody>
         </table>
     </div>
+    </body>
+    </html>
     """
     return html
 
 def render_main_table_html(sorted_dates, institutions, short_map, total_short_by_date, margin_map, stock_prices):
-    """動的HTMLテーブルの生成（スマホのダークモードでも白背景・文字色を維持）"""
+    """メインHTMLテーブル（スマホのダークモード強制反転をブロック）"""
     inst_count = len(institutions)
     
     header_tr1 = (
-        '<tr style="background-color: #262730; color: white;">'
-        '<th rowspan="2" style="border: 1px solid #444; padding: 10px; text-align: center; width: 8%;">Date</th>'
-        '<th rowspan="2" style="border: 1px solid #444; padding: 10px; text-align: center; width: 10%;">前日比<br>出来高</th>'
+        '<tr style="background-color: #262730 !important; color: #ffffff !important;">'
+        '<th rowspan="2" style="border: 1px solid #444; padding: 10px; text-align: center; width: 8%; color: #ffffff !important;">Date</th>'
+        '<th rowspan="2" style="border: 1px solid #444; padding: 10px; text-align: center; width: 10%; color: #ffffff !important;">前日比<br>出来高</th>'
     )
     if inst_count > 0:
-        header_tr1 += f'<th colspan="{inst_count}" style="border: 1px solid #444; padding: 8px; text-align: center;">機関投資家の空売り</th>'
+        header_tr1 += f'<th colspan="{inst_count}" style="border: 1px solid #444; padding: 8px; text-align: center; color: #ffffff !important;">機関投資家の空売り</th>'
     header_tr1 += (
-        '<th rowspan="2" style="border: 1px solid #444; padding: 10px; text-align: center; width: 8%;">全増減</th>'
-        '<th colspan="2" style="border: 1px solid #444; padding: 8px; text-align: center;">個人信用 (合計・前日差・内訳)</th>'
+        '<th rowspan="2" style="border: 1px solid #444; padding: 10px; text-align: center; width: 8%; color: #ffffff !important;">全増減</th>'
+        '<th colspan="2" style="border: 1px solid #444; padding: 8px; text-align: center; color: #ffffff !important;">個人信用 (合計・前日差・内訳)</th>'
         '</tr>'
     )
 
-    header_tr2 = '<tr style="background-color: #3b3c43; color: white;">'
+    header_tr2 = '<tr style="background-color: #3b3c43 !important; color: #ffffff !important;">'
     for idx, inst in enumerate(institutions, 1):
         short_label = get_short_inst_name(inst)
-        header_tr2 += f'<th style="border: 1px solid #555; padding: 6px; text-align: center;" title="{inst}">{idx}<br>{short_label}</th>'
+        header_tr2 += f'<th style="border: 1px solid #555; padding: 6px; text-align: center; color: #ffffff !important;" title="{inst}">{idx}<br>{short_label}</th>'
     header_tr2 += (
-        '<th style="border: 1px solid #555; padding: 6px; text-align: center; width: 18%;">売</th>'
-        '<th style="border: 1px solid #555; padding: 6px; text-align: center; width: 18%;">買</th>'
+        '<th style="border: 1px solid #555; padding: 6px; text-align: center; width: 18%; color: #ffffff !important;">売</th>'
+        '<th style="border: 1px solid #555; padding: 6px; text-align: center; width: 18%; color: #ffffff !important;">買</th>'
         '</tr>'
     )
 
@@ -138,11 +153,11 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
             pct_str, pct_color = format_pct(price_info["pct"])
             vol_str = smart_format(price_info["volume"])
             price_cell_html = (
-                f'<div style="font-weight: bold; color: {pct_color}; font-size: 0.95em;">{pct_str}</div>'
-                f'<div style="color: #666; font-size: 0.8em; margin-top: 2px;">{vol_str}</div>'
+                f'<div style="font-weight: bold; color: {pct_color} !important; font-size: 0.95em;">{pct_str}</div>'
+                f'<div style="color: #666666 !important; font-size: 0.8em; margin-top: 2px;">{vol_str}</div>'
             )
         else:
-            price_cell_html = '<div style="color: #666;">-</div>'
+            price_cell_html = '<div style="color: #666666 !important;">-</div>'
 
         # 機関列
         inst_tds = ""
@@ -155,13 +170,13 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
                 d_str, d_col, d_bg = format_change(diff)
                 daily_short_sum += shares
                 inst_tds += (
-                    '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 6px; background-color: #ffffff; color: #1a1a1a;">'
-                    f'<div style="font-weight: bold; font-size: 0.95em; color: #1a1a1a;">{sh_str}</div>'
-                    f'<div style="color: {d_col}; background-color: {d_bg}; font-size: 0.8em; padding: 1px; border-radius: 2px;">{d_str}</div>'
+                    '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 6px; background-color: #ffffff !important; color: #1a1a1a !important;">'
+                    f'<div style="font-weight: bold; font-size: 0.95em; color: #1a1a1a !important;">{sh_str}</div>'
+                    f'<div style="color: {d_col} !important; background-color: {d_bg} !important; font-size: 0.8em; padding: 1px; border-radius: 2px;">{d_str}</div>'
                     '</td>'
                 )
             else:
-                inst_tds += '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 6px; background-color: #ffffff; color: #888;">-</td>'
+                inst_tds += '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 6px; background-color: #ffffff !important; color: #888888 !important;">-</td>'
 
         # 全増減
         prev_d = sorted_dates[i+1] if i + 1 < len(sorted_dates) else None
@@ -171,9 +186,9 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
         if cur_sum > 0:
             all_diff = cur_sum - prev_sum if prev_sum > 0 else 0
             all_diff_str, all_diff_col, all_diff_bg = format_change(all_diff)
-            all_change_html = f'<div style="color: {all_diff_col}; background-color: {all_diff_bg}; font-size: 0.85em; padding: 2px; border-radius: 2px;">{all_diff_str}</div>'
+            all_change_html = f'<div style="color: {all_diff_col} !important; background-color: {all_diff_bg} !important; font-size: 0.85em; padding: 2px; border-radius: 2px;">{all_diff_str}</div>'
         else:
-            all_change_html = '<div style="color: #666;">-</div>'
+            all_change_html = '<div style="color: #666666 !important;">-</div>'
 
         # 個人信用
         m_info = margin_map.get(d)
@@ -193,20 +208,20 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
             tot_buy, buy_chg_str, buy_chg_color, buy_chg_bg, gen_buy, std_buy = "-", "0", "#666", "#f0f2f6", "-", "-"
 
         row_html = (
-            '<tr>'
-            f'<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #ffffff; color: #1a1a1a;">{date_str}</td>'
-            f'<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #ffffff; color: #1a1a1a;">{price_cell_html}</td>'
+            '<tr style="background-color: #ffffff !important;">'
+            f'<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #ffffff !important; color: #1a1a1a !important;">{date_str}</td>'
+            f'<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #ffffff !important; color: #1a1a1a !important;">{price_cell_html}</td>'
             f'{inst_tds}'
-            f'<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #ffffff; color: #1a1a1a;">{all_change_html}</td>'
-            '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #ffffff; color: #1a1a1a;">'
-            f'<div style="font-weight: bold; font-size: 1.05em; color: #1a1a1a;">{tot_sell}</div>'
-            f'<div style="color: {sell_chg_color}; background-color: {sell_chg_bg}; font-size: 0.85em; padding: 2px; margin: 3px 0; border-radius: 2px;">{sell_chg_str}</div>'
-            f'<div style="color: #666; font-size: 0.75em;">般: {gen_sell} / 制: {std_sell}</div>'
+            f'<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #ffffff !important; color: #1a1a1a !important;">{all_change_html}</td>'
+            '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #ffffff !important; color: #1a1a1a !important;">'
+            f'<div style="font-weight: bold; font-size: 1.05em; color: #1a1a1a !important;">{tot_sell}</div>'
+            f'<div style="color: {sell_chg_color} !important; background-color: {sell_chg_bg} !important; font-size: 0.85em; padding: 2px; margin: 3px 0; border-radius: 2px;">{sell_chg_str}</div>'
+            f'<div style="color: #666666 !important; font-size: 0.75em;">般: {gen_sell} / 制: {std_sell}</div>'
             '</td>'
-            '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #ffffff; color: #1a1a1a;">'
-            f'<div style="font-weight: bold; font-size: 1.05em; color: #1a1a1a;">{tot_buy}</div>'
-            f'<div style="color: {buy_chg_color}; background-color: {buy_chg_bg}; font-size: 0.85em; padding: 2px; margin: 3px 0; border-radius: 2px;">{buy_chg_str}</div>'
-            f'<div style="color: #666; font-size: 0.75em;">般: {gen_buy} / 制: {std_buy}</div>'
+            '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #ffffff !important; color: #1a1a1a !important;">'
+            f'<div style="font-weight: bold; font-size: 1.05em; color: #1a1a1a !important;">{tot_buy}</div>'
+            f'<div style="color: {buy_chg_color} !important; background-color: {buy_chg_bg} !important; font-size: 0.85em; padding: 2px; margin: 3px 0; border-radius: 2px;">{buy_chg_str}</div>'
+            f'<div style="color: #666666 !important; font-size: 0.75em;">般: {gen_buy} / 制: {std_buy}</div>'
             '</td>'
             '</tr>'
         )
@@ -214,8 +229,11 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
 
     body_content = "".join(rows_html)
     return (
-        '<table style="width:100%; border-collapse: collapse; font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', Roboto, sans-serif; font-size: 13px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); background-color: #ffffff;">'
+        '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="color-scheme" content="light">'
+        '<style>:root { color-scheme: light; } body { margin:0; background:#fff !important; color:#1a1a1a !important; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }</style>'
+        '</head><body>'
+        '<table style="width:100%; border-collapse: collapse; font-size: 13px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); background-color: #ffffff !important;">'
         f'<thead>{header_tr1}{header_tr2}</thead>'
         f'<tbody>{body_content}</tbody>'
-        '</table>'
+        '</table></body></html>'
     )
