@@ -11,24 +11,38 @@ DEFAULT_WATCHLIST = [
 
 @st.cache_resource
 def get_gspread_client():
-    """GSpreadクライアントの初期化（再接続を防ぐ）"""
+    """GSpreadクライアントの初期化（複数のSecretsキー名に自動対応）"""
     try:
         scopes = [
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive"
         ]
-        service_account_info = dict(st.secrets["gcp_service_account"])
-        creds = Credentials.from_service_account_info(service_account_info, scopes=scopes)
+        
+        # 既存のSecrets構造（gspread_credentials, gcp_service_account, または直下）を柔軟に検出
+        creds_dict = None
+        if "gspread_credentials" in st.secrets:
+            creds_dict = dict(st.secrets["gspread_credentials"])
+        elif "gcp_service_account" in st.secrets:
+            creds_dict = dict(st.secrets["gcp_service_account"])
+        elif "type" in st.secrets and st.secrets.get("type") == "service_account":
+            creds_dict = dict(st.secrets)
+            
+        if not creds_dict:
+            return None
+            
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         return gspread.authorize(creds)
     except Exception as e:
         return None
 
 def get_watchlist_worksheet():
-    """指定スプレッドシートの1シート目を取得"""
+    """Secretsで指定されたスプレッドシートの1シート目を取得"""
     try:
         sheet_id = st.secrets.get("WATCHLIST_SPREADSHEET_ID")
         if not sheet_id:
-            return None
+            # Secretsに未設定の場合のフォールバック
+            sheet_id = "1ntZ0eWV59MK88iDJSMDEiuyZOaghWnOjUqAn36G8Qsg"
+            
         gc = get_gspread_client()
         if not gc:
             return None
@@ -38,7 +52,7 @@ def get_watchlist_worksheet():
         return None
 
 def load_watchlist_from_sheet():
-    """スプレッドシートから安全に読み込み（空シートでも絶対にフリーズしない処理）"""
+    """スプレッドシートから読み込み"""
     try:
         ws = get_watchlist_worksheet()
         if not ws:
@@ -46,12 +60,11 @@ def load_watchlist_from_sheet():
 
         all_values = ws.get_all_values()
         
-        # シートが空、またはヘッダー行しかない場合は初期データを投入
+        # シートが空、または見出しだけの場合は初期データを投入
         if not all_values or len(all_values) <= 1:
             save_watchlist_to_sheet(DEFAULT_WATCHLIST)
             return DEFAULT_WATCHLIST
 
-        # 2行目以降からデータを抽出
         watchlist = []
         for row in all_values[1:]:
             if not row:
@@ -66,11 +79,12 @@ def load_watchlist_from_sheet():
         return DEFAULT_WATCHLIST
 
 def save_watchlist_to_sheet(items):
-    """スプレッドシートへ全件保存（A列: code, B列: name）"""
+    """スプレッドシートへ全件上書き保存"""
     try:
         ws = get_watchlist_worksheet()
         if not ws:
             return
+            
         rows = [["code", "name"]]
         for item in items:
             c = item.get("code") if isinstance(item, dict) else item
@@ -78,9 +92,12 @@ def save_watchlist_to_sheet(items):
             rows.append([str(c).strip().upper(), str(n).strip()])
             
         ws.clear()
-        ws.update("A1", rows)
-    except Exception:
-        pass
+        try:
+            ws.update(range_name="A1", values=rows)
+        except TypeError:
+            ws.update("A1", rows)
+    except Exception as e:
+        st.sidebar.error(f"シート保存失敗: {e}")
 
 def init_watchlist_state():
     """セッション状態の初期化"""
@@ -191,7 +208,7 @@ def render_watchlist_ui():
         
         lines = []
         for it in watchlist:
-            code = it.get("code") if isinstance(it, dict) else item
+            code = it.get("code") if isinstance(it, dict) else it
             name = it.get("name", "") if isinstance(it, dict) else ""
             lines.append(f"{code} {name}".strip())
         current_text = "\n".join(lines)
