@@ -187,7 +187,11 @@ if ticker:
     st.plotly_chart(
         fig, 
         use_container_width=True, 
-        config={'scrollZoom': False, 'displayModeBar': False}
+        config={
+            'scrollZoom': False,
+            'displayModeBar': False,
+            'doubleClick': False
+        }
     )
 
     # 6. 機関一覧とHTMLテーブルの表示
