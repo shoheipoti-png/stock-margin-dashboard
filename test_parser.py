@@ -5,7 +5,7 @@ import requests
 import pdfplumber
 from bs4 import BeautifulSoup
 
-JPX_URL = "[https://www.jpx.co.jp/markets/statistics-equities/margin/01.html](https://www.jpx.co.jp/markets/statistics-equities/margin/01.html)"
+JPX_URL = "https://www.jpx.co.jp/markets/statistics-equities/margin/01.html"
 ANCHOR_CODES = ["1570", "7011", "9432"]
 
 def get_latest_pdf_url():
@@ -15,7 +15,7 @@ def get_latest_pdf_url():
     for a in soup.find_all('a', href=True):
         if '_mtall.pdf' in a['href']:
             href = a['href']
-            return href if href.startswith('http') else "[https://www.jpx.co.jp](https://www.jpx.co.jp)" + href
+            return href if href.startswith('http') else "https://www.jpx.co.jp" + href
     return None
 
 def clean_val(text):
@@ -73,7 +73,7 @@ def test_robust_parser():
                     if any(k in raw_name for k in ["投信", "ETF", "受益証券", "連動型", "上場投信"]):
                         continue
 
-                # ログの実測値に基づく正確な物理グリッド境界
+                # 正確な物理グリッド境界（ログ実測値準拠）
                 def get_cell_val(x_start, x_end):
                     for w in row_words:
                         cx = (w["x0"] + w["x1"]) / 2.0
