@@ -220,7 +220,7 @@ def main():
     
     print(f"スプレッドシート書き込み中（全 {len(filtered_rows)} レコード）...")
     worksheet.clear()
-    worksheet.update('A1', [headers_row] + filtered_rows)
+    worksheet.update(range_name='A1', values=[headers_row] + filtered_rows)
     print(f"スプレッドシート更新完了（基準日: {report_date} / 当日追加銘柄数: {len(final_rows)}）")
 
 if __name__ == "__main__":
