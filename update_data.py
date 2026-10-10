@@ -37,19 +37,18 @@ def clean_val(text):
 
 def parse_row_numbers_grid(row_words):
     """
-    検証済みパーサー：
+    検証済み物理グリッドパーサー：
     - 日経レバ（1570）の名称結合を安全に特定
     - 個別株は実績のあるコード特定ロジック（165 <= x0 < 195）
-    - 数値列は厳格な物理グリッド（X境界座標）で抽出
+    - 数値列は実測物理グリッド（X境界座標）で抽出
     """
     code = None
     raw_name = ""
     
-    # 1. 日経レバ（1570）の判定
+    # 1. 日経レバ（1570）の特定
     if any("日経平均レバ" in w["text"] for w in row_words):
         code = "1570"
     else:
-        # 2. 通常の個別銘柄判定
         sorted_words = sorted(row_words, key=lambda x: x["x0"])
         for w in sorted_words:
             t = w["text"].strip()
@@ -68,26 +67,26 @@ def parse_row_numbers_grid(row_words):
         if any(k in raw_name for k in ["投信", "ETF", "受益証券", "連動型", "上場投信"]):
             return None, None, None
 
-    # 3. 物理境界による数値抽出
+    # 2. 実測値に基づく物理境界による数値抽出（前日比カラムを完全除外）
     def get_cell_val(x_start, x_end):
         for w in row_words:
             cx = (w["x0"] + w["x1"]) / 2.0
             if x_start <= cx < x_end:
                 t = w["text"].strip()
-                if "%" not in t and "▲" not in t and "-" not in t:
+                if "%" not in t and "▲" not in t and "-" not in t and "*" not in t:
                     v = clean_val(t)
                     if v > 0:
                         return v
         return 0
 
-    tot_sell = get_cell_val(185.0, 250.0)
-    tot_buy  = get_cell_val(290.0, 363.6)
-    gen_sell = get_cell_val(405.0, 477.2)
-    std_sell = get_cell_val(477.2, 560.0)
-    gen_buy  = get_cell_val(560.0, 684.2)
-    std_buy  = get_cell_val(684.2, 808.4)
+    tot_sell = get_cell_val(255.0, 310.0)
+    tot_buy  = get_cell_val(365.0, 430.0)
+    gen_sell = get_cell_val(490.0, 540.0)
+    std_sell = get_cell_val(570.0, 620.0)
+    gen_buy  = get_cell_val(650.0, 705.0)
+    std_buy  = get_cell_val(740.0, 790.0)
 
-    # 4. 数学的自己修復（合計 ＝ 一般 ＋ 制度）
+    # 3. 数学的自己修復（合計 ＝ 一般 ＋ 制度）
     calc_tot_sell = gen_sell + std_sell
     if (tot_sell == 0 and calc_tot_sell > 0) or (abs(tot_sell - calc_tot_sell) > 100 and calc_tot_sell > 0):
         tot_sell = calc_tot_sell
@@ -208,7 +207,7 @@ def main():
                     tot_buy, gen_buy, std_buy
                 ]
 
-    # 3. 異常検知バリデーション（異常があれば例外を投げて更新処理を完全停止）
+    # 3. 異常検知バリデーション
     validate_extracted_data(extracted_rows)
 
     final_rows = list(extracted_rows.values())
