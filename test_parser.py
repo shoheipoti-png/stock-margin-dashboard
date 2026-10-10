@@ -6,7 +6,6 @@ import pdfplumber
 from bs4 import BeautifulSoup
 
 JPX_URL = "https://www.jpx.co.jp/markets/statistics-equities/margin/01.html"
-ANCHOR_CODES = ["1570", "7011", "9432"]
 
 def get_latest_pdf_url():
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -27,20 +26,20 @@ def clean_val(text):
     except Exception:
         return 0
 
-def test_robust_parser():
+def diagnose_mismatches():
     pdf_url = get_latest_pdf_url()
     print(f"対象PDF: {pdf_url}")
     res = requests.get(pdf_url, headers={"User-Agent": "Mozilla/5.0"})
     
-    extracted_records = {}
+    mismatches = []
+    total_count = 0
 
     with pdfplumber.open(io.BytesIO(res.content)) as pdf:
-        for page_idx, page in enumerate(pdf.pages):
+        for page in pdf.pages:
             words = page.extract_words(x_tolerance=2, y_tolerance=2)
             if not words:
                 continue
             
-            # 「株数 / Shs.」アンカーの検出（物理境界 215〜260）
             shs_anchors = [w for w in words if ("株数" in w["text"] or "Shs" in w["text"]) and 215.0 <= w["x0"] <= 260.0]
             
             for anchor in shs_anchors:
@@ -50,8 +49,6 @@ def test_robust_parser():
                 code = None
                 raw_name = ""
                 
-                # 【日経レバの確実な捕捉】
-                # 長大名称による文字結合「日経平均レバ...」を行内から検出
                 if any("日経平均レバ" in w["text"] for w in row_words):
                     code = "1570"
                 else:
@@ -69,11 +66,9 @@ def test_robust_parser():
                     if not code:
                         continue
 
-                    # ETF・投信の除外判定
                     if any(k in raw_name for k in ["投信", "ETF", "受益証券", "連動型", "上場投信"]):
                         continue
 
-                # 物理境界による数値抽出
                 def get_cell_val(x_start, x_end):
                     for w in row_words:
                         cx = (w["x0"] + w["x1"]) / 2.0
@@ -92,33 +87,29 @@ def test_robust_parser():
                 gen_buy  = get_cell_val(560.0, 684.2)
                 std_buy  = get_cell_val(684.2, 808.4)
 
-                # 数学的自己修復
-                calc_tot_sell = gen_sell + std_sell
-                if (tot_sell == 0 and calc_tot_sell > 0) or (abs(tot_sell - calc_tot_sell) > 100 and calc_tot_sell > 0):
-                    tot_sell = calc_tot_sell
+                total_count += 1
+                
+                # 不一致の検出
+                sell_match = (tot_sell == (gen_sell + std_sell))
+                buy_match  = (tot_buy == (gen_buy + std_buy))
 
-                calc_tot_buy = gen_buy + std_buy
-                if (tot_buy == 0 and calc_tot_buy > 0) or (abs(tot_buy - calc_tot_buy) > 100 and calc_tot_buy > 0):
-                    tot_buy = calc_tot_buy
+                if not sell_match or not buy_match:
+                    mismatches.append({
+                        "code": code,
+                        "sell": (tot_sell, gen_sell, std_sell, sell_match),
+                        "buy": (tot_buy, gen_buy, std_buy, buy_match),
+                        "words": [f"{w['text']}({w['x0']:.0f}..{w['x1']:.0f})" for w in row_words if w['x0'] >= 180]
+                    })
 
-                extracted_records[code] = {
-                    "sell_tot": tot_sell,
-                    "sell_gen": gen_sell,
-                    "sell_std": std_sell,
-                    "buy_tot": tot_buy,
-                    "buy_gen": gen_buy,
-                    "buy_std": std_buy
-                }
-
-    print(f"\n=== 解析完了: 総抽出銘柄数 = {len(extracted_records)} 件 ===")
-    
-    # アンカー銘柄の検証
-    for acode in ANCHOR_CODES:
-        if acode in extracted_records:
-            d = extracted_records[acode]
-            print(f"★ アンカー銘柄 [{acode}]: 売残合計={d['sell_tot']:,}株, 買残合計={d['buy_tot']:,}株 (一般={d['buy_gen']:,}, 制度={d['buy_std']:,}) -> 成功")
-        else:
-            print(f"× アンカー銘柄 [{acode}]: 取得失敗")
+    print(f"\n総銘柄数: {total_count} 件, 不一致件数: {len(mismatches)} 件 ({len(mismatches)/total_count*100:.2f}%)")
+    print("\n=== 不一致サンプルの詳細（最初の10件）===")
+    for m in mismatches[:10]:
+        print(f"銘柄 [{m['code']}]:")
+        if not m['sell'][3]:
+            print(f"  売残不一致: 合計={m['sell'][0]:,} vs (一般={m['sell'][1]:,} + 制度={m['sell'][2]:,} = {m['sell'][1]+m['sell'][2]:,})")
+        if not m['buy'][3]:
+            print(f"  買残不一致: 合計={m['buy'][0]:,} vs (一般={m['buy'][1]:,} + 制度={m['buy'][2]:,} = {m['buy'][1]+m['buy'][2]:,})")
+        print(f"  行内数値単語: {' '.join(m['words'][:8])}")
 
 if __name__ == "__main__":
-    test_robust_parser()
+    diagnose_mismatches()
