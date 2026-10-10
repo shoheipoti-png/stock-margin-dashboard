@@ -68,8 +68,7 @@ def main():
     sheet_id = os.environ.get("SHORT_SPREADSHEET_ID")
     
     if not creds_json or not sheet_id:
-        print("エラー: 認証情報 (GCP_SERVICE_ACCOUNT_KEY) または SHORT_SPREADSHEET_ID が設定されていません。")
-        return
+        raise ValueError("エラー: 認証情報 (GCP_SERVICE_ACCOUNT_KEY) または SHORT_SPREADSHEET_ID が設定されていません。")
 
     # 1. Googleスプレッドシート接続
     creds_dict = json.loads(creds_json)
@@ -81,8 +80,7 @@ def main():
     # 2. 最新ファイルURL取得 & ダウンロード
     xls_url = get_latest_short_xls_url()
     if not xls_url:
-        print("エラー: 最新の空売りXLSファイルが見つかりませんでした。")
-        return
+        raise ValueError("エラー: 最新の空売りXLSファイルが見つかりませんでした。")
     print(f"対象XLS URL: {xls_url}")
 
     res = requests.get(xls_url)
@@ -132,8 +130,7 @@ def main():
 
     print(f"抽出データ件数（ETF除外後）: {len(parsed_rows)} 件")
     if not parsed_rows:
-        print("抽出可能なデータがありませんでした。")
-        return
+        raise ValueError("エラー: 抽出可能なデータが 0 件でした。ファイル形式変更の可能性があります。")
 
     # 5. スプレッドシート既存データの取得と公表日ベースの上書きマージ
     headers = ["公表日", "計算年月日", "銘柄コード", "銘柄名", "機関名", "空売り残高割合", "空売り残高数量", "直近計算年月日", "直近空売り残高割合"]
@@ -152,9 +149,9 @@ def main():
     filtered_rows = [row for row in data_rows if len(row) > 0 and row[0] >= cutoff_date_str]
     filtered_rows.extend(parsed_rows)
 
-    # 6. シートへ書き込み
+    # 6. シートへ書き込み（キーワード引数で非推奨警告を解消）
     worksheet.clear()
-    worksheet.update('A1', [headers] + filtered_rows)
+    worksheet.update(range_name='A1', values=[headers] + filtered_rows)
     print(f"スプレッドシート更新完了: 公表日={disclosure_date}, 総行数={len(filtered_rows)} 件")
 
 if __name__ == "__main__":
