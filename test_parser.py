@@ -47,32 +47,36 @@ def test_robust_parser():
                 y = (anchor["top"] + anchor["bottom"]) / 2.0
                 row_words = [w for w in words if abs(((w["top"] + w["bottom"]) / 2.0) - y) <= 4.0]
                 
-                # 物理境界に基づく各列の厳格な抽出
+                # 【特例判定】行内に「1570」または「15700」が存在するか直接チェック
+                is_nikkei_lever = any(re.match(r'^1570[0A-Za-z]?$', w["text"].strip()) for w in row_words)
+                
                 code = None
                 raw_name = ""
                 market_text = ""
                 
-                for w in row_words:
-                    cx = (w["x0"] + w["x1"]) / 2.0
-                    t = w["text"].strip()
+                if is_nikkei_lever:
+                    # 特例：日経レバとして確定
+                    code = "1570"
+                else:
+                    # 通常：物理境界に基づく個別株コードの抽出
+                    for w in row_words:
+                        cx = (w["x0"] + w["x1"]) / 2.0
+                        t = w["text"].strip()
+                        if cx < 118.0:
+                            raw_name += t
+                        elif 118.0 <= cx < 155.0:
+                            market_text += t
+                        elif 154.9 <= cx < 195.0 and not code:
+                            m = re.match(r'^([0-9A-Za-z]{4})[0A-Za-z]?$', t)
+                            if m:
+                                code = m.group(1).upper()
                     
-                    if cx < 118.0:
-                        raw_name += t
-                    elif 118.0 <= cx < 155.0:
-                        market_text += t
-                    elif 165.0 <= cx < 195.0 and not code:
-                        # 4桁コード（末尾0カット対応）
-                        m = re.match(r'^([0-9A-Za-z]{4})[0A-Za-z]?$', t)
-                        if m:
-                            code = m.group(1).upper()
-                
-                if not code:
-                    continue
+                    if not code:
+                        continue
 
-                # ETF・投信の除外判定（1570以外を排除）
-                is_etf = ("投信" in market_text) or any(k in raw_name for k in ["ETF", "投信", "受益証券"])
-                if is_etf and code != "1570":
-                    continue
+                    # 通常のETF・投信は除外
+                    if ("投信" in market_text) or any(k in raw_name for k in ["ETF", "投信", "受益証券"]):
+                        continue
 
                 # 物理境界による数値抽出
                 def get_cell_val(x_start, x_end):
