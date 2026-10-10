@@ -16,9 +16,8 @@ def get_latest_pdf_url():
             return href if href.startswith('http') else "https://www.jpx.co.jp" + href
     return None
 
-def debug_1570_page4():
+def debug_1570_shs_row():
     pdf_url = get_latest_pdf_url()
-    print(f"対象PDF: {pdf_url}")
     res = requests.get(pdf_url, headers={"User-Agent": "Mozilla/5.0"})
     
     with pdfplumber.open(io.BytesIO(res.content)) as pdf:
@@ -26,16 +25,27 @@ def debug_1570_page4():
         p3 = pdf.pages[3]
         words = p3.extract_words(x_tolerance=2, y_tolerance=2)
         
-        print("\n=== 4ページ目で「1570」を含む単語の探索 ===")
-        found_words = [w for w in words if "1570" in w["text"]]
-        for w in found_words:
-            print(f"発見: '{w['text']}', x0={w['x0']:.1f}, x1={w['x1']:.1f}, top={w['top']:.1f}, bottom={w['bottom']:.1f}")
+        # 1570の金額行が top=356 付近だったため、
+        # その上段（株数行）を含む top=335〜365 の全単語をY座標順に出力
+        print("\n=== 日経レバ周辺（上段・下段）の全単語配置 ===")
+        near_words = [w for w in words if 335.0 <= w["top"] <= 365.0]
+        
+        # Y座標ごとにまとめて行として表示
+        rows_by_y = {}
+        for w in sorted(near_words, key=lambda x: (x["top"], x["x0"])):
+            matched_key = None
+            for y_k in rows_by_y:
+                if abs(w["top"] - y_k) <= 3.0:
+                    matched_key = y_k
+                    break
+            if matched_key is None:
+                matched_key = round(w["top"], 1)
+                rows_by_y[matched_key] = []
+            rows_by_y[matched_key].append(w)
             
-            # その単語と同じ行（Y座標が近い単語）を全列挙
-            row_words = [rw for rw in words if abs(rw["top"] - w["top"]) <= 4.0]
-            print("\n--- この行の全単語の物理配置 ---")
-            for rw in sorted(row_words, key=lambda x: x["x0"]):
-                print(f"  x0={rw['x0']:5.1f}..{rw['x1']:5.1f} | text='{rw['text']}'")
+        for y_k, rwords in sorted(rows_by_y.items()):
+            row_str = " ".join([f"{w['text']}(x={w['x0']:.0f})" for w in rwords])
+            print(f"\n[Y={y_k} の行]:\n  {row_str}")
 
 if __name__ == "__main__":
-    debug_1570_page4()
+    debug_1570_shs_row()
