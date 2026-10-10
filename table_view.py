@@ -32,7 +32,8 @@ def smart_format(val):
     try:
         if val == "" or val is None or val == "-": return "-"
         num = float(str(val).replace(',', ''))
-        if abs(num) >= 1_000_000: return f"{num / 1_000_000:.1f}M"
+        # M単位は小数点2桁に変更
+        if abs(num) >= 1_000_000: return f"{num / 1_000_000:.2f}M"
         elif abs(num) >= 1_000: return f"{num / 1_000:.1f}K"
         else: return f"{int(num)}"
     except:
@@ -46,7 +47,8 @@ def format_change(num):
         color = "#d32f2f" if val > 0 else "#1976d2"
         bg = "#ffebee" if val > 0 else "#e3f2fd"
         sign = "+" if val > 0 else ""
-        if abs(val) >= 1_000_000: formatted = f"{sign}{val / 1_000_000:.1f}M"
+        # M単位は小数点2桁に変更
+        if abs(val) >= 1_000_000: formatted = f"{sign}{val / 1_000_000:.2f}M"
         elif abs(val) >= 1_000: formatted = f"{sign}{val / 1_000:.1f}K"
         else: formatted = f"{sign}{int(val)}"
         return formatted, color, bg
@@ -147,14 +149,14 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
         except:
             date_str = d
 
-        # 株価・出来高
+        # 株価・出来高（出来高のフォントサイズを拡大）
         price_info = stock_prices.get(d)
         if price_info:
             pct_str, pct_color = format_pct(price_info["pct"])
             vol_str = smart_format(price_info["volume"])
             price_cell_html = (
                 f'<div style="font-weight: bold; color: {pct_color} !important; font-size: 0.95em;">{pct_str}</div>'
-                f'<div style="color: #666666 !important; font-size: 0.8em; margin-top: 2px;">{vol_str}</div>'
+                f'<div style="font-weight: bold; color: #222222 !important; font-size: 1.05em; margin-top: 3px;">{vol_str}</div>'
             )
         else:
             price_cell_html = '<div style="color: #666666 !important;">-</div>'
