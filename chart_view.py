@@ -1,7 +1,7 @@
 import plotly.graph_objects as go
 
 def render_combined_chart(graph_dates, buy_shares, sell_shares, inst_shares, vol_list, vol_colors, title_label):
-    """信用残・機関空売り・出来高を同一株数スケールで描画（ホバーから日付を排除）"""
+    """信用残・機関空売り・出来高を同一株数スケールで描画（日付ヘッダー非表示の一括ホバー）"""
     fig = go.Figure()
 
     # 1. 出来高（棒グラフ：前日比カラー）
@@ -47,14 +47,14 @@ def render_combined_chart(graph_dates, buy_shares, sell_shares, inst_shares, vol
 
     fig.update_layout(
         title=f"{title_label} 信用残・機関空売り・出来高推移（同一株数軸）",
-        dragmode=False,  # ドラッグ操作（四角いズーム枠）を完全に無効化
-        hovermode="closest",  # 各要素単体でスマートに表示（日付ヘッダーを非表示化）
+        dragmode=False,
+        hovermode="x unified",  # 同一日付の全トレースを一括表示
         margin=dict(l=40, r=40, t=50, b=30),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         template="plotly_white",
         bargap=0.35
     )
-    # 軸のズーム・移動固定
-    fig.update_xaxes(type='category', title_text="日付", fixedrange=True)
+    # hoverformat="" により、ホバー先頭の日付タイトル行のみを消去
+    fig.update_xaxes(type='category', title_text="日付", fixedrange=True, hoverformat="")
     fig.update_yaxes(title_text="株数（出来高 / 信用残）", fixedrange=True)
     return fig
