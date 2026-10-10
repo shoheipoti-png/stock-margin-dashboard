@@ -39,7 +39,6 @@ def parse_row_numbers_grid(row_words):
     """
     特定された物理グリッド（X境界線）に基づき、各カラムを厳格に抽出
     """
-    # 銘柄コード（x0 < 185 にある4桁英数字）の特定
     code = None
     raw_name = ""
     for w in sorted(row_words, key=lambda x: x["x0"]):
@@ -54,7 +53,6 @@ def parse_row_numbers_grid(row_words):
     if not code:
         return None, None, None
 
-    # 各セル枠（物理境界）に基づく数値抽出
     def get_cell_val(x_start, x_end):
         for w in row_words:
             cx = (w["x0"] + w["x1"]) / 2.0
@@ -66,13 +64,7 @@ def parse_row_numbers_grid(row_words):
                         return v
         return 0
 
-    # 物理境界座標:
-    # 185.0〜250.0: 売残合計 (前日比は 250.0〜291.4 のため物理分離)
-    # 291.0〜363.6: 買残合計 (前日比は 363.6〜405.0 のため物理分離)
-    # 405.0〜477.2: 売残一般
-    # 477.2〜560.0: 売残制度
-    # 560.0〜684.2: 買残一般
-    # 684.2〜808.4: 買残制度
+    # 物理境界座標
     tot_sell = get_cell_val(185.0, 250.0)
     tot_buy  = get_cell_val(291.0, 363.6)
     gen_sell = get_cell_val(405.0, 477.2)
@@ -99,7 +91,7 @@ def validate_extracted_data(rows_dict):
     total_count = len(rows_dict)
     print(f"=== バリデーション実行（抽出銘柄数: {total_count} 件）===")
 
-    # 1. 抽出件数のしきい値チェック（通常3,800件前後存在）
+    # 1. 抽出件数のしきい値チェック（通常3,800件前後）
     if total_count < 3500:
         raise ValueError(f"【重大アラート】抽出件数が異常に少なすぎます（{total_count} 件 < 3,500件）。PDFレイアウト変更の可能性があるため更新を中断します。")
 
@@ -185,7 +177,7 @@ def main():
             if not words:
                 continue
             
-            # 各銘柄行のアンカーとなる「株数」または「Shs.」を検出（金額Val行を完全排除）
+            # 各銘柄行のアンカーとなる「株数」または「Shs.」を検出
             shs_anchors = [w for w in words if ("株数" in w["text"] or "Shs" in w["text"]) and 180 <= w["x0"] <= 260]
             
             for anchor in shs_anchors:
@@ -196,9 +188,10 @@ def main():
                 if not code or not values:
                     continue
                 
-                # 【ETF・投信完全除外】1570（日経レバ）以外はスキップ
-                if code != "1570" and any(k in raw_name for k in ["投信", "ETF", "受益証券", "連動型", "上場投信"]):
-                    continue
+                # 【ETF・投信完全除外】1570（日経レバ）以外のETF・投信はスキップ
+                if code != "1570":
+                    if any(k in raw_name for k in ["投信", "ETF", "受益証券", "連動型", "上場投信"]):
+                        continue
                 
                 tot_sell, gen_sell, std_sell, tot_buy, gen_buy, std_buy = values
                 extracted_rows[code] = [
@@ -206,7 +199,7 @@ def main():
                     tot_buy, gen_buy, std_buy
                 ]
 
-    # 3. 異常検知バリデーション（異常があればここで例外を投げて更新処理を完全停止）
+    # 3. 異常検知バリデーション（異常があれば例外を投げて更新処理を完全停止）
     validate_extracted_data(extracted_rows)
 
     final_rows = list(extracted_rows.values())
