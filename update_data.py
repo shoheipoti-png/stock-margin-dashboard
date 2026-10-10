@@ -11,7 +11,7 @@ from google.oauth2.service_account import Credentials
 
 JPX_URL = "https://www.jpx.co.jp/markets/statistics-equities/margin/01.html"
 
-# 定点監視用アンカー銘柄（これらの買残・売残が0になった場合は異常と判定）
+# 定点監視用アンカー銘柄（買残・売残が0または欠落した場合は異常と判定）
 ANCHOR_CODES = ["1570", "7011", "9432"]
 
 def get_latest_pdf_url():
@@ -37,22 +37,38 @@ def clean_val(text):
 
 def parse_row_numbers_grid(row_words):
     """
-    特定された物理グリッド（X境界線）に基づき、各カラムを厳格に抽出
+    検証済みパーサー：
+    - 日経レバ（1570）の名称結合を安全に特定
+    - 個別株は実績のあるコード特定ロジック（165 <= x0 < 195）
+    - 数値列は厳格な物理グリッド（X境界座標）で抽出
     """
     code = None
     raw_name = ""
-    for w in sorted(row_words, key=lambda x: x["x0"]):
-        t = w["text"].strip()
-        if w["x0"] < 130:
-            raw_name += t
-        elif w["x0"] < 185 and not code:
-            m = re.match(r'^([0-9A-Za-z]{4})[0A-Za-z]?$', t)
-            if m:
-                code = m.group(1).upper()
+    
+    # 1. 日経レバ（1570）の判定
+    if any("日経平均レバ" in w["text"] for w in row_words):
+        code = "1570"
+    else:
+        # 2. 通常の個別銘柄判定
+        sorted_words = sorted(row_words, key=lambda x: x["x0"])
+        for w in sorted_words:
+            t = w["text"].strip()
+            x0 = w["x0"]
+            if x0 < 130.0:
+                raw_name += t
+            elif 165.0 <= x0 < 195.0 and not code:
+                m = re.match(r'^([0-9A-Za-z]{4})[0A-Za-z]?$', t)
+                if m:
+                    code = m.group(1).upper()
 
-    if not code:
-        return None, None, None
+        if not code:
+            return None, None, None
 
+        # ETF・投信の除外判定
+        if any(k in raw_name for k in ["投信", "ETF", "受益証券", "連動型", "上場投信"]):
+            return None, None, None
+
+    # 3. 物理境界による数値抽出
     def get_cell_val(x_start, x_end):
         for w in row_words:
             cx = (w["x0"] + w["x1"]) / 2.0
@@ -64,21 +80,19 @@ def parse_row_numbers_grid(row_words):
                         return v
         return 0
 
-    # 物理境界座標
     tot_sell = get_cell_val(185.0, 250.0)
-    tot_buy  = get_cell_val(291.0, 363.6)
+    tot_buy  = get_cell_val(290.0, 363.6)
     gen_sell = get_cell_val(405.0, 477.2)
     std_sell = get_cell_val(477.2, 560.0)
     gen_buy  = get_cell_val(560.0, 684.2)
     std_buy  = get_cell_val(684.2, 808.4)
 
-    # 数学的整合性チェック＆自動補正（合計 ＝ 一般 ＋ 制度）
+    # 4. 数学的自己修復（合計 ＝ 一般 ＋ 制度）
     calc_tot_sell = gen_sell + std_sell
-    calc_tot_buy  = gen_buy + std_buy
-
     if (tot_sell == 0 and calc_tot_sell > 0) or (abs(tot_sell - calc_tot_sell) > 100 and calc_tot_sell > 0):
         tot_sell = calc_tot_sell
 
+    calc_tot_buy = gen_buy + std_buy
     if (tot_buy == 0 and calc_tot_buy > 0) or (abs(tot_buy - calc_tot_buy) > 100 and calc_tot_buy > 0):
         tot_buy = calc_tot_buy
 
@@ -86,14 +100,14 @@ def parse_row_numbers_grid(row_words):
 
 def validate_extracted_data(rows_dict):
     """
-    不測の事態・レイアウト変更を検知する多層バリデーション
+    不測の事態・レイアウト破綻を検知する多層バリデーション
     """
     total_count = len(rows_dict)
     print(f"=== バリデーション実行（抽出銘柄数: {total_count} 件）===")
 
     # 1. 抽出件数のしきい値チェック（通常3,800件前後）
     if total_count < 3500:
-        raise ValueError(f"【重大アラート】抽出件数が異常に少なすぎます（{total_count} 件 < 3,500件）。PDFレイアウト変更の可能性があるため更新を中断します。")
+        raise ValueError(f"【重大アラート】抽出件数が異常に少なすぎます（{total_count} 件 < 3,500件）。レイアウト変更の可能性があるため更新を中断します。")
 
     # 2. 定点監視アンカー銘柄の検証
     for acode in ANCHOR_CODES:
@@ -102,7 +116,7 @@ def validate_extracted_data(rows_dict):
         r = rows_dict[acode]
         buy_tot = int(r[5])
         if buy_tot == 0:
-            raise ValueError(f"【重大アラート】主要アンカー銘柄 [{acode}] の買残合計が 0 です（大桁・レイアウトズレの疑い）。更新を中断します。")
+            raise ValueError(f"【重大アラート】主要アンカー銘柄 [{acode}] の買残合計が 0 です。更新を中断します。")
         print(f"定点観測 [{acode}]: 売残合計={int(r[2]):,}株, 買残合計={buy_tot:,}株 (一般={int(r[6]):,}, 制度={int(r[7]):,}) -> 正常")
 
     # 3. 数学的整合性（合計＝一般＋制度）の違反率チェック
@@ -114,7 +128,7 @@ def validate_extracted_data(rows_dict):
     mismatch_rate = (mismatch_count / total_count) * 100
     print(f"整合性チェック不一致率: {mismatch_rate:.2f}% ({mismatch_count}/{total_count})")
     if mismatch_rate > 3.0:
-        raise ValueError(f"【重大アラート】内訳整合性エラー率が許容値（3%）を超えています（{mismatch_rate:.2f}%）。カラム境界ズレの可能性があるため中断します。")
+        raise ValueError(f"【重大アラート】内訳整合性エラー率が許容値（3%）を超過しています（{mismatch_rate:.2f}%）。更新を中断します。")
 
     print("=== 全バリデーション通過: データは極めて正常です ===")
 
@@ -143,7 +157,7 @@ def main():
     
     report_date = None
     
-    # 1. 1ページ目から基準日を取得
+    # 1. 基準日の取得
     with pdfplumber.open(pdf_file) as pdf:
         p0_text = pdf.pages[0].extract_text() or ""
         date_match = re.search(r'(\d{4})/(\d{1,2})/(\d{1,2})\s*申込み現在', p0_text)
@@ -177,8 +191,8 @@ def main():
             if not words:
                 continue
             
-            # 各銘柄行のアンカーとなる「株数」または「Shs.」を検出
-            shs_anchors = [w for w in words if ("株数" in w["text"] or "Shs" in w["text"]) and 180 <= w["x0"] <= 260]
+            # アンカー「株数」「Shs.」の物理カラム枠（215〜260）
+            shs_anchors = [w for w in words if ("株数" in w["text"] or "Shs" in w["text"]) and 215.0 <= w["x0"] <= 260.0]
             
             for anchor in shs_anchors:
                 y = (anchor["top"] + anchor["bottom"]) / 2.0
@@ -187,11 +201,6 @@ def main():
                 code, raw_name, values = parse_row_numbers_grid(row_words)
                 if not code or not values:
                     continue
-                
-                # 【ETF・投信完全除外】1570（日経レバ）以外のETF・投信はスキップ
-                if code != "1570":
-                    if any(k in raw_name for k in ["投信", "ETF", "受益証券", "連動型", "上場投信"]):
-                        continue
                 
                 tot_sell, gen_sell, std_sell, tot_buy, gen_buy, std_buy = values
                 extracted_rows[code] = [
