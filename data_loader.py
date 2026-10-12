@@ -91,16 +91,26 @@ def get_yahoo_realtime_and_pts(ticker_code):
 
         # -------------------------------------------------------------
         # 1. 東証リアルタイム株価
+        # DevToolsより: CommonPriceBoard__price 内の StyledNumber__value
         # -------------------------------------------------------------
-        price_elem = soup.find('span', class_=re.compile(r'_Price_'))
-        if price_elem:
-            result["price"] = price_elem.get_text().strip()
+        price_box = soup.find(class_=re.compile(r'CommonPriceBoard__price\b|CommonPriceBoard__price__'))
+        if price_box:
+            val_span = price_box.find('span', class_=re.compile(r'StyledNumber__value'))
+            if val_span:
+                result["price"] = val_span.get_text().strip()
+        
+        # フォールバック
+        if not result["price"]:
+            for sp in soup.find_all(class_=re.compile(r'[Pp]rice')):
+                val_span = sp.find('span', class_=re.compile(r'StyledNumber__value'))
+                if val_span:
+                    txt = val_span.get_text().strip()
+                    if re.match(r'^[1-9][0-9]{0,2}(?:,[0-9]{3})+(?:\.[0-9]+)?$', txt):
+                        result["price"] = txt
+                        break
 
         # -------------------------------------------------------------
         # 2. 東証の前日比・騰落率
-        # HTML構造:
-        # PriceChangeLabel__primary の子 StyledNumber__value -> 前日比 (+700)
-        # PriceChangeLabel__secondary の子 StyledNumber__value -> 騰落率 (+15.79)
         # -------------------------------------------------------------
         primary_box = soup.find(class_=re.compile(r'PriceChangeLabel__primary'))
         if primary_box:
@@ -108,10 +118,8 @@ def get_yahoo_realtime_and_pts(ticker_code):
             if val_span:
                 result["change_val"] = val_span.get_text().strip()
 
-        # 東証側（PTSではない側）の secondary を探索
         all_secondary = soup.find_all(class_=re.compile(r'PriceChangeLabel__secondary'))
         if all_secondary:
-            # 最初の secondary は通常、東証騰落率
             pct_span = all_secondary[0].find('span', class_=re.compile(r'StyledNumber__value'))
             if pct_span:
                 raw_pct = pct_span.get_text().strip()
@@ -119,9 +127,6 @@ def get_yahoo_realtime_and_pts(ticker_code):
 
         # -------------------------------------------------------------
         # 3. 夜間PTS株価 & 東証終値比
-        # HTML構造:
-        # CommonPriceBoard__ptsPrice の子 StyledNumber__value -> PTS株価 (5,198)
-        # 2つ目以降の PriceChangeLabel__secondary -> PTS終値比 (+64 / +1.25)
         # -------------------------------------------------------------
         pts_price_box = soup.find(class_=re.compile(r'CommonPriceBoard__ptsPrice'))
         if pts_price_box:
@@ -129,7 +134,6 @@ def get_yahoo_realtime_and_pts(ticker_code):
             if pts_val_span:
                 result["pts_price"] = pts_val_span.get_text().strip()
 
-        # PTSの変動値・騰落率（PTSブロック内の要素から抽出）
         pts_label = soup.find(class_=re.compile(r'CommonPriceBoard__ptsLabel'))
         if pts_label:
             pts_parent = pts_label.find_parent('li') or pts_label.find_parent('div') or pts_label.parent
@@ -137,7 +141,6 @@ def get_yahoo_realtime_and_pts(ticker_code):
                 pts_sec = pts_parent.find_all(class_=re.compile(r'PriceChangeLabel'))
                 for sec in pts_sec:
                     sec_text = sec.get_text().strip()
-                    # 変動値とパーセントを正規表現で捕捉 (例: +64 (+1.25%))
                     m = re.search(r'([+-]?[0-9,]+(?:\.[0-9]+)?)\s*\(?([+-]?[0-9.]+[%％]?)\)?', sec_text)
                     if m:
                         result["pts_diff_val"] = m.group(1).strip()
@@ -145,7 +148,6 @@ def get_yahoo_realtime_and_pts(ticker_code):
                         result["pts_diff_pct"] = f"{pct_val}%" if not pct_val.endswith('%') else pct_val
                         break
                     
-                    # 個別の StyledNumber__value を探索
                     vals = sec.find_all('span', class_=re.compile(r'StyledNumber__value'))
                     if len(vals) >= 2:
                         result["pts_diff_val"] = vals[0].get_text().strip()
