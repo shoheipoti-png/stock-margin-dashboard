@@ -67,7 +67,7 @@ def get_company_name_from_yahoo_japan(ticker_code):
 @st.cache_data(ttl=60)
 def get_yahoo_realtime_and_pts(ticker_code):
     """
-    Yahoo!ファイナンスから東証リアルタイム株価と夜間PTS株価情報を確実に抽出
+    Yahoo!ファイナンスから東証株価・前日比・騰落率および夜間PTS情報を完全抽出
     """
     clean_code = clean_ticker_code(ticker_code)
     url = f"https://finance.yahoo.co.jp/quote/{clean_code}.T"
@@ -89,68 +89,75 @@ def get_yahoo_realtime_and_pts(ticker_code):
         
         soup = BeautifulSoup(res.text, 'html.parser')
 
-        # --------------------------------------------------
-        # 1. 東証リアルタイム株価 & 前日比の抽出
-        # --------------------------------------------------
-        # 「リアルタイム株価」のラベル要素を基点底上げ
-        rt_marker = soup.find(string=re.compile(r'リアルタイム株価'))
-        if rt_marker:
-            # ヘッダー内の価格ボックス全体（最大親コンテナ）を取得
-            header_box = rt_marker.find_parent('div')
-            for _ in range(4):
-                if header_box and header_box.parent and len(header_box.get_text()) < 300:
-                    header_box = header_box.parent
+        # -------------------------------------------------------------
+        # 1. 東証リアルタイム株価
+        # -------------------------------------------------------------
+        price_elem = soup.find('span', class_=re.compile(r'_Price_'))
+        if price_elem:
+            result["price"] = price_elem.get_text().strip()
 
-            if header_box:
-                box_text = header_box.get_text(separator=' ')
-                # 価格の抽出（例: 5,134）
-                for sp in header_box.find_all(['span', 'div', 'p']):
-                    t = sp.get_text().strip()
-                    if re.match(r'^[1-9][0-9]{0,2}(?:,[0-9]{3})+(?:\.[0-9]+)?$', t) or (t.isdigit() and len(t) >= 3 and t != clean_code):
-                        result["price"] = t
+        # -------------------------------------------------------------
+        # 2. 東証の前日比・騰落率
+        # HTML構造:
+        # PriceChangeLabel__primary の子 StyledNumber__value -> 前日比 (+700)
+        # PriceChangeLabel__secondary の子 StyledNumber__value -> 騰落率 (+15.79)
+        # -------------------------------------------------------------
+        primary_box = soup.find(class_=re.compile(r'PriceChangeLabel__primary'))
+        if primary_box:
+            val_span = primary_box.find('span', class_=re.compile(r'StyledNumber__value'))
+            if val_span:
+                result["change_val"] = val_span.get_text().strip()
+
+        # 東証側（PTSではない側）の secondary を探索
+        all_secondary = soup.find_all(class_=re.compile(r'PriceChangeLabel__secondary'))
+        if all_secondary:
+            # 最初の secondary は通常、東証騰落率
+            pct_span = all_secondary[0].find('span', class_=re.compile(r'StyledNumber__value'))
+            if pct_span:
+                raw_pct = pct_span.get_text().strip()
+                result["change_pct"] = f"{raw_pct}%" if not raw_pct.endswith('%') else raw_pct
+
+        # -------------------------------------------------------------
+        # 3. 夜間PTS株価 & 東証終値比
+        # HTML構造:
+        # CommonPriceBoard__ptsPrice の子 StyledNumber__value -> PTS株価 (5,198)
+        # 2つ目以降の PriceChangeLabel__secondary -> PTS終値比 (+64 / +1.25)
+        # -------------------------------------------------------------
+        pts_price_box = soup.find(class_=re.compile(r'CommonPriceBoard__ptsPrice'))
+        if pts_price_box:
+            pts_val_span = pts_price_box.find('span', class_=re.compile(r'StyledNumber__value'))
+            if pts_val_span:
+                result["pts_price"] = pts_val_span.get_text().strip()
+
+        # PTSの変動値・騰落率（PTSブロック内の要素から抽出）
+        pts_label = soup.find(class_=re.compile(r'CommonPriceBoard__ptsLabel'))
+        if pts_label:
+            pts_parent = pts_label.find_parent('li') or pts_label.find_parent('div') or pts_label.parent
+            if pts_parent:
+                pts_sec = pts_parent.find_all(class_=re.compile(r'PriceChangeLabel'))
+                for sec in pts_sec:
+                    sec_text = sec.get_text().strip()
+                    # 変動値とパーセントを正規表現で捕捉 (例: +64 (+1.25%))
+                    m = re.search(r'([+-]?[0-9,]+(?:\.[0-9]+)?)\s*\(?([+-]?[0-9.]+[%％]?)\)?', sec_text)
+                    if m:
+                        result["pts_diff_val"] = m.group(1).strip()
+                        pct_val = m.group(2).strip()
+                        result["pts_diff_pct"] = f"{pct_val}%" if not pct_val.endswith('%') else pct_val
                         break
-
-                # 前日比数値の抽出（例: +700 または -50）
-                diff_val_match = re.search(r'前日比\s*[:：]?\s*([+-]?[0-9,]+(?:\.[0-9]+)?)', box_text)
-                if diff_val_match:
-                    result["change_val"] = diff_val_match.group(1).strip()
-                else:
-                    # 符号付き数値単体のマッチ
-                    val_candidates = re.findall(r'([+-][0-9,]+(?:\.[0-9]+)?)', box_text)
-                    if val_candidates:
-                        result["change_val"] = val_candidates[0]
-
-                # 前日比パーセントの抽出（例: +15.79%）
-                pct_match = re.search(r'\(([+-]?[0-9.]+(?:%|％))\)', box_text)
-                if pct_match:
-                    result["change_pct"] = pct_match.group(1).strip()
-
-        # --------------------------------------------------
-        # 2. 夜間PTS株価 & 東証終値比の抽出
-        # --------------------------------------------------
-        pts_marker = soup.find(string=re.compile(r'夜間PTS'))
-        if pts_marker:
-            pts_elem = pts_marker.find_parent('li') or pts_marker.find_parent('div') or pts_marker.parent
-            if pts_elem:
-                pts_text = pts_elem.get_text(separator=' ')
-                
-                # PTS価格の抽出: "夜間PTS"の直後に続く数値を正規表現で確実に捕捉
-                # 例: "夜間PTS 5,198" または "夜間PTS5,198"
-                price_match = re.search(r'夜間PTS\s*([0-9,]+(?:\.[0-9]+)?)', pts_text)
-                if price_match:
-                    result["pts_price"] = price_match.group(1).strip()
-
-                # 東証終値比（値と％）の抽出
-                # パターン1: "東証終値比 +64 (+1.25%)"
-                pts_diff_match = re.search(r'東証終値比\s*[:：]?\s*([+-]?[0-9,]+(?:\.[0-9]+)?)\s*(?:\(([+-]?[0-9.]+[%％]?)\)|([+-]?[0-9.]+[%％]))', pts_text)
-                if pts_diff_match:
-                    result["pts_diff_val"] = pts_diff_match.group(1).strip()
-                    result["pts_diff_pct"] = (pts_diff_match.group(2) or pts_diff_match.group(3)).strip()
-                else:
-                    # パターン2: "東証終値比+0.42%" のようにパーセントのみの場合
-                    pts_pct_only = re.search(r'東証終値比\s*[:：]?\s*([+-]?[0-9.]+[%％])', pts_text)
-                    if pts_pct_only:
-                        result["pts_diff_pct"] = pts_pct_only.group(1).strip()
+                    
+                    # 個別の StyledNumber__value を探索
+                    vals = sec.find_all('span', class_=re.compile(r'StyledNumber__value'))
+                    if len(vals) >= 2:
+                        result["pts_diff_val"] = vals[0].get_text().strip()
+                        pct_v = vals[1].get_text().strip()
+                        result["pts_diff_pct"] = f"{pct_v}%" if not pct_v.endswith('%') else pct_v
+                        break
+                    elif len(vals) == 1:
+                        txt = vals[0].get_text().strip()
+                        if '.' in txt:
+                            result["pts_diff_pct"] = f"{txt}%" if not txt.endswith('%') else txt
+                        else:
+                            result["pts_diff_val"] = txt
 
     except Exception as e:
         print(f"Yahoo取得エラー ({ticker_code}): {e}")
