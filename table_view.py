@@ -32,7 +32,6 @@ def smart_format(val):
     try:
         if val == "" or val is None or val == "-": return "-"
         num = float(str(val).replace(',', ''))
-        # M単位は小数点2桁に変更
         if abs(num) >= 1_000_000: return f"{num / 1_000_000:.2f}M"
         elif abs(num) >= 1_000: return f"{num / 1_000:.1f}K"
         else: return f"{int(num)}"
@@ -47,7 +46,6 @@ def format_change(num):
         color = "#d32f2f" if val > 0 else "#1976d2"
         bg = "#ffebee" if val > 0 else "#e3f2fd"
         sign = "+" if val > 0 else ""
-        # M単位は小数点2桁に変更
         if abs(val) >= 1_000_000: formatted = f"{sign}{val / 1_000_000:.2f}M"
         elif abs(val) >= 1_000: formatted = f"{sign}{val / 1_000:.1f}K"
         else: formatted = f"{sign}{int(val)}"
@@ -66,7 +64,7 @@ def format_pct(num):
         return "-", "#666"
 
 def render_institution_summary_html(institutions, title_label):
-    """上部の機関参加一覧ボックス（スマホのダークモード強制反転をブロック）"""
+    """上部の機関参加一覧ボックス"""
     if not institutions:
         return ""
     
@@ -115,7 +113,7 @@ def render_institution_summary_html(institutions, title_label):
     return html
 
 def render_main_table_html(sorted_dates, institutions, short_map, total_short_by_date, margin_map, stock_prices):
-    """メインHTMLテーブル（スマホのダークモード強制反転をブロック）"""
+    """メインHTMLテーブル（確定値・未確定引継ぎ値・消失ステータス対応版）"""
     inst_count = len(institutions)
     
     header_tr1 = (
@@ -141,6 +139,53 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
         '</tr>'
     )
 
+    # -------------------------------------------------------------
+    # 機関ごとの時系列ポジション追跡（過去日付 -> 新しい日付の順に計算）
+    # -------------------------------------------------------------
+    chronological_dates = list(reversed(sorted_dates))
+    tracking_state = {inst: {"shares": 0, "status": "none"} for inst in institutions}
+    # status: 'none', 'active', 'released' (<0.5%消失)
+
+    daily_inst_display = {}   # (date, inst) -> (display_shares_str, diff_str, diff_col, diff_bg, is_confirmed, status)
+    daily_total_estimated = {} # date -> estimated_total_shares
+    daily_has_reports = {}    # date -> bool (その日に1件でも公表があったか)
+
+    for d in chronological_dates:
+        day_has_report = any((d, inst) in short_map for inst in institutions)
+        daily_has_reports[d] = day_has_report
+        
+        day_sum = 0
+        for inst in institutions:
+            item = short_map.get((d, inst))
+            if item:
+                shares, diff = item
+                if shares > 0:
+                    tracking_state[inst] = {"shares": shares, "status": "active"}
+                    d_str, d_col, d_bg = format_change(diff)
+                    daily_inst_display[(d, inst)] = (smart_format(shares), d_str, d_col, d_bg, True, "active")
+                    day_sum += shares
+                else:
+                    # 0株または0.5%未満で義務消失報告
+                    tracking_state[inst] = {"shares": 0, "status": "released"}
+                    daily_inst_display[(d, inst)] = ("<0.5%", "消失", "#888", "#f0f2f6", True, "released")
+            else:
+                prev_status = tracking_state[inst]["status"]
+                prev_shares = tracking_state[inst]["shares"]
+                
+                # 当日その銘柄でいずれかの機関から報告が出ている日、かつ過去にポジションがある場合 -> 引継ぎ
+                if day_has_report and prev_status == "active":
+                    daily_inst_display[(d, inst)] = (f"({smart_format(prev_shares)})", "-", "#666", "transparent", False, "active")
+                    day_sum += prev_shares
+                elif prev_status == "released":
+                    daily_inst_display[(d, inst)] = ("-", "-", "#888", "transparent", False, "released")
+                else:
+                    daily_inst_display[(d, inst)] = ("-", "-", "#888", "transparent", False, "none")
+
+        daily_total_estimated[d] = day_sum if day_has_report else None
+
+    # -------------------------------------------------------------
+    # HTML行の生成（最新日付順に降順表示）
+    # -------------------------------------------------------------
     rows_html = []
     for i, d in enumerate(sorted_dates):
         try:
@@ -149,7 +194,7 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
         except:
             date_str = d
 
-        # 株価・出来高（出来高のフォントサイズを拡大）
+        # 株価・出来高
         price_info = stock_prices.get(d)
         if price_info:
             pct_str, pct_color = format_pct(price_info["pct"])
@@ -161,36 +206,51 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
         else:
             price_cell_html = '<div style="color: #666666 !important;">-</div>'
 
-        # 機関列
+        # 機関列のセル描画
         inst_tds = ""
-        daily_short_sum = 0
         for inst in institutions:
-            item = short_map.get((d, inst))
-            if item:
-                shares, diff = item
-                sh_str = smart_format(shares)
-                d_str, d_col, d_bg = format_change(diff)
-                daily_short_sum += shares
+            sh_str, d_str, d_col, d_bg, is_confirmed, status = daily_inst_display.get(
+                (d, inst), ("-", "-", "#888", "transparent", False, "none")
+            )
+            
+            if status == "released" and is_confirmed:
+                # 消失した当日
+                inst_tds += (
+                    '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 6px; background-color: #ffffff !important;">'
+                    '<div style="font-weight: bold; font-size: 0.85em; color: #777777 !important; background-color: #f0f2f6; border-radius: 3px; padding: 2px;">消失 (&lt;0.5%)</div>'
+                    '</td>'
+                )
+            elif is_confirmed and status == "active":
+                # 確定公表値（黒字＋色付き増減バッジ）
                 inst_tds += (
                     '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 6px; background-color: #ffffff !important; color: #1a1a1a !important;">'
                     f'<div style="font-weight: bold; font-size: 0.95em; color: #1a1a1a !important;">{sh_str}</div>'
                     f'<div style="color: {d_col} !important; background-color: {d_bg} !important; font-size: 0.8em; padding: 1px; border-radius: 2px;">{d_str}</div>'
                     '</td>'
                 )
+            elif not is_confirmed and status == "active":
+                # 未提出（直近値の引継ぎ：グレー文字＋括弧表示）
+                inst_tds += (
+                    '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 6px; background-color: #fafbfc !important; color: #666666 !important;">'
+                    f'<div style="font-size: 0.9em; color: #666666 !important;" title="直近の報告値を保持">{sh_str}</div>'
+                    '<div style="color: #999999 !important; font-size: 0.75em;">変動なし</div>'
+                    '</td>'
+                )
             else:
+                # 未公表日またはポジションなし
                 inst_tds += '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 6px; background-color: #ffffff !important; color: #888888 !important;">-</td>'
 
-        # 全増減
+        # 全増減（推定保有合計の前日差）
+        cur_tot = daily_total_estimated.get(d)
         prev_d = sorted_dates[i+1] if i + 1 < len(sorted_dates) else None
-        prev_sum = total_short_by_date.get(prev_d, 0) if prev_d else 0
-        cur_sum = total_short_by_date.get(d, 0)
-        
-        if cur_sum > 0:
-            all_diff = cur_sum - prev_sum if prev_sum > 0 else 0
+        prev_tot = daily_total_estimated.get(prev_d) if prev_d else None
+
+        if cur_tot is not None and prev_tot is not None:
+            all_diff = cur_tot - prev_tot
             all_diff_str, all_diff_col, all_diff_bg = format_change(all_diff)
             all_change_html = f'<div style="color: {all_diff_col} !important; background-color: {all_diff_bg} !important; font-size: 0.85em; padding: 2px; border-radius: 2px;">{all_diff_str}</div>'
         else:
-            all_change_html = '<div style="color: #666666 !important;">-</div>'
+            all_change_html = '<div style="color: #888888 !important;">-</div>'
 
         # 個人信用
         m_info = margin_map.get(d)
