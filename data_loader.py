@@ -67,7 +67,7 @@ def get_company_name_from_yahoo_japan(ticker_code):
 @st.cache_data(ttl=60)
 def get_yahoo_realtime_and_pts(ticker_code):
     """
-    Yahoo!ファイナンスから東証リアルタイム株価と夜間PTS株価情報を抽出
+    Yahoo!ファイナンスから東証リアルタイム株価と夜間PTS株価情報を確実に抽出
     """
     clean_code = clean_ticker_code(ticker_code)
     url = f"https://finance.yahoo.co.jp/quote/{clean_code}.T"
@@ -89,41 +89,58 @@ def get_yahoo_realtime_and_pts(ticker_code):
         
         soup = BeautifulSoup(res.text, 'html.parser')
 
-        # 1. 東証リアルタイム株価 & 前日比
-        # 銘柄ヘッダー付近の株価表示ブロック
-        price_elem = soup.find('span', class_=re.compile(r'_Price_'))
-        if price_elem:
-            result["price"] = price_elem.get_text().strip()
-
-        change_elems = soup.find_all('span', class_=re.compile(r'_Change_'))
-        for elem in change_elems:
-            txt = elem.get_text().strip()
-            if '(' in txt and '%' in txt:
-                result["change_pct"] = txt.replace('(', '').replace(')', '')
-            elif any(c in txt for c in ['+', '-', '±']) or txt.isdigit():
-                if not result["change_val"]:
-                    result["change_val"] = txt
-
-        # 2. 夜間PTS株価 & 東証終値比
-        pts_text_node = soup.find(string=re.compile(r'夜間PTS'))
-        if pts_text_node:
-            pts_container = pts_text_node.find_parent('div') or pts_text_node.find_parent('section') or pts_text_node.parent
-            if pts_container:
-                c_text = pts_container.get_text()
-                # PTS価格の抽出 (例: 5,198)
-                nums = re.findall(r'([0-9,]+(?:\.[0-9]+)?)', c_text)
-                for n in nums:
-                    pure_num = n.replace(',', '')
-                    if pure_num.isdigit() and len(pure_num) >= 2 and n != result["price"]:
-                        result["pts_price"] = n
-                        break
-                # PTS前日比・騰落率の抽出 (例: +64 (+1.25%))
-                diff_match = re.search(r'([+-]?[0-9,]+(?:\.[0-9]+)?)\s*\(([+-]?[0-9.]+[%％]?)\)', c_text)
+        # --------------------------------------------------
+        # 1. 東証リアルタイム株価・前日比の取得
+        # --------------------------------------------------
+        rt_marker = soup.find(string=re.compile(r'リアルタイム株価'))
+        if rt_marker:
+            container = rt_marker.find_parent('div')
+            while container and len(container.get_text()) < 50:
+                container = container.parent
+            if container:
+                text = container.get_text(separator=' ')
+                diff_match = re.search(r'前日比\s*[:：]?\s*([+-]?[0-9,]+(?:\.[0-9]+)?)\s*\(([+-]?[0-9.]+[%％]?)\)', text)
                 if diff_match:
-                    result["pts_diff_val"] = diff_match.group(1)
-                    result["pts_diff_pct"] = diff_match.group(2)
-    except Exception:
-        pass
+                    result["change_val"] = diff_match.group(1)
+                    result["change_pct"] = diff_match.group(2)
+                
+                for candidate in container.find_all(['span', 'div', 'p']):
+                    t = candidate.get_text().strip()
+                    if re.match(r'^[0-9,]+(?:\.[0-9]+)?$', t) and t.replace(',', '') != clean_code:
+                        result["price"] = t
+                        break
+
+        # フォールバック判定
+        if not result["price"]:
+            for sp in soup.find_all('span'):
+                t = sp.get_text().strip()
+                if re.match(r'^[1-9][0-9]{0,2}(?:,[0-9]{3})+(?:\.[0-9]+)?$', t) and t.replace(',', '') != clean_code:
+                    result["price"] = t
+                    break
+
+        # --------------------------------------------------
+        # 2. 夜間PTS株価・東証終値比の取得
+        # --------------------------------------------------
+        pts_marker = soup.find(string=re.compile(r'夜間PTS'))
+        if pts_marker:
+            pts_container = pts_marker.find_parent('li') or pts_marker.find_parent('div') or pts_marker.parent
+            if pts_container:
+                pts_text = pts_container.get_text(separator=' ')
+                pts_diff_match = re.search(r'東証終値比\s*[:：]?\s*([+-]?[0-9,]+(?:\.[0-9]+)?)\s*\(([+-]?[0-9.]+[%％]?)\)', pts_text)
+                if pts_diff_match:
+                    result["pts_diff_val"] = pts_diff_match.group(1)
+                    result["pts_diff_pct"] = pts_diff_match.group(2)
+                
+                for candidate in pts_container.find_all(['span', 'div', 'p']):
+                    t = candidate.get_text().strip()
+                    clean_t = t.replace(',', '')
+                    if clean_t.isdigit() and clean_t != clean_code and 2 <= len(clean_t) <= 7:
+                        if ':' not in t:
+                            result["pts_price"] = t
+                            break
+
+    except Exception as e:
+        print(f"Yahoo取得エラー ({ticker_code}): {e}")
 
     return result
 
