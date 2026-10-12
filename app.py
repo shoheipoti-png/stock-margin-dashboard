@@ -86,12 +86,18 @@ if ticker:
     tse_price = f"{quote_info['price']} 円" if quote_info['price'] else "-"
     if quote_info['change_val'] and quote_info['change_pct']:
         tse_delta = f"{quote_info['change_val']} ({quote_info['change_pct']})"
+    elif quote_info['change_val']:
+        tse_delta = f"{quote_info['change_val']}"
+    elif quote_info['change_pct']:
+        tse_delta = f"{quote_info['change_pct']}"
     else:
         tse_delta = None
 
     pts_price = f"{quote_info['pts_price']} 円" if quote_info['pts_price'] else "-"
     if quote_info['pts_diff_val'] and quote_info['pts_diff_pct']:
         pts_delta = f"{quote_info['pts_diff_val']} ({quote_info['pts_diff_pct']})"
+    elif quote_info['pts_diff_pct']:
+        pts_delta = f"{quote_info['pts_diff_pct']}"
     else:
         pts_delta = None
 
@@ -160,7 +166,6 @@ if ticker:
                 prev_shares_by_inst[inst] = shares
                 short_map[(d_str, inst)] = (shares, diff)
 
-        # 過去日付順に各機関の最新ポジションを引き継いで合算
         running_inst_shares = {inst: 0 for inst in institutions}
         for d in sorted(sorted_dates):
             day_has_report = any((d, inst) in short_map for inst in institutions)
@@ -216,8 +221,8 @@ if ticker:
             vol = p_info["volume"]
             pct = p_info["pct"]
             vol_list.append(vol)
-            if pct > 0: vol_colors.append("rgba(239, 83, 80, 0.45)")     # 赤（プラス）
-            elif pct < 0: vol_colors.append("rgba(66, 165, 245, 0.45)")  # 青（マイナス）
+            if pct > 0: vol_colors.append("rgba(239, 83, 80, 0.45)")
+            elif pct < 0: vol_colors.append("rgba(66, 165, 245, 0.45)")
             else: vol_colors.append("rgba(189, 189, 189, 0.45)")
         else:
             vol_list.append(0)
