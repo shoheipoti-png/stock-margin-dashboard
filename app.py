@@ -64,7 +64,7 @@ if ticker:
     company_name = get_company_name_from_yahoo_japan(clean_target)
     stock_prices = get_stock_prices(clean_target)
 
-    # 2. 銘柄ヘッダーとお気に入りボタン（見出しのすぐ右隣に配置）
+    # 2. 銘柄ヘッダーとお気に入りボタン
     title_label = f"{clean_target}（{company_name}）" if company_name else clean_target
     fav_status = is_favorite(clean_target)
     btn_label = "★ 削除" if fav_status else "★ 追加"
@@ -111,7 +111,7 @@ if ticker:
 
     institutions = s_filtered["機関名"].dropna().unique().tolist() if not s_filtered.empty and "機関名" in s_filtered.columns else []
 
-    # 機関データ辞書の構築
+    # 機関データ辞書と時系列引き継ぎ合計の構築
     short_map = {}
     total_short_by_date = {}
     if not s_filtered.empty:
@@ -120,7 +120,6 @@ if ticker:
         prev_shares_by_inst = {}
         for d, group in s_sorted.groupby(date_col):
             d_str = str(d)
-            daily_total = 0
             for _, r in group.iterrows():
                 inst = r.get("機関名", "")
                 try: shares = float(str(r.get("空売り残高数量", 0)).replace(',', ''))
@@ -129,8 +128,18 @@ if ticker:
                 diff = shares - prev if prev != 0 else 0
                 prev_shares_by_inst[inst] = shares
                 short_map[(d_str, inst)] = (shares, diff)
-                daily_total += shares
-            total_short_by_date[d_str] = daily_total
+
+        # 過去日付順に各機関の最新ポジションを引き継いで合算（表と完全一致させるロジック）
+        running_inst_shares = {inst: 0 for inst in institutions}
+        for d in sorted(sorted_dates):
+            day_has_report = any((d, inst) in short_map for inst in institutions)
+            if day_has_report:
+                for inst in institutions:
+                    if (d, inst) in short_map:
+                        running_inst_shares[inst] = short_map[(d, inst)][0]
+                total_short_by_date[d] = sum(running_inst_shares.values())
+            else:
+                total_short_by_date[d] = None
 
     # 個人信用辞書の構築（前日差自動計算）
     margin_map = {}
