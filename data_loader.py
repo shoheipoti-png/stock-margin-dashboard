@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
@@ -62,6 +63,69 @@ def get_company_name_from_yahoo_japan(ticker_code):
     except Exception:
         pass
     return ""
+
+@st.cache_data(ttl=60)
+def get_yahoo_realtime_and_pts(ticker_code):
+    """
+    Yahoo!ファイナンスから東証リアルタイム株価と夜間PTS株価情報を抽出
+    """
+    clean_code = clean_ticker_code(ticker_code)
+    url = f"https://finance.yahoo.co.jp/quote/{clean_code}.T"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    result = {
+        "price": None,
+        "change_val": None,
+        "change_pct": None,
+        "pts_price": None,
+        "pts_diff_val": None,
+        "pts_diff_pct": None,
+    }
+    try:
+        res = requests.get(url, headers=headers, timeout=5)
+        if res.status_code != 200:
+            return result
+        
+        soup = BeautifulSoup(res.text, 'html.parser')
+
+        # 1. 東証リアルタイム株価 & 前日比
+        # 銘柄ヘッダー付近の株価表示ブロック
+        price_elem = soup.find('span', class_=re.compile(r'_Price_'))
+        if price_elem:
+            result["price"] = price_elem.get_text().strip()
+
+        change_elems = soup.find_all('span', class_=re.compile(r'_Change_'))
+        for elem in change_elems:
+            txt = elem.get_text().strip()
+            if '(' in txt and '%' in txt:
+                result["change_pct"] = txt.replace('(', '').replace(')', '')
+            elif any(c in txt for c in ['+', '-', '±']) or txt.isdigit():
+                if not result["change_val"]:
+                    result["change_val"] = txt
+
+        # 2. 夜間PTS株価 & 東証終値比
+        pts_text_node = soup.find(string=re.compile(r'夜間PTS'))
+        if pts_text_node:
+            pts_container = pts_text_node.find_parent('div') or pts_text_node.find_parent('section') or pts_text_node.parent
+            if pts_container:
+                c_text = pts_container.get_text()
+                # PTS価格の抽出 (例: 5,198)
+                nums = re.findall(r'([0-9,]+(?:\.[0-9]+)?)', c_text)
+                for n in nums:
+                    pure_num = n.replace(',', '')
+                    if pure_num.isdigit() and len(pure_num) >= 2 and n != result["price"]:
+                        result["pts_price"] = n
+                        break
+                # PTS前日比・騰落率の抽出 (例: +64 (+1.25%))
+                diff_match = re.search(r'([+-]?[0-9,]+(?:\.[0-9]+)?)\s*\(([+-]?[0-9.]+[%％]?)\)', c_text)
+                if diff_match:
+                    result["pts_diff_val"] = diff_match.group(1)
+                    result["pts_diff_pct"] = diff_match.group(2)
+    except Exception:
+        pass
+
+    return result
 
 @st.cache_data(ttl=3600)
 def get_stock_prices(ticker_code):
