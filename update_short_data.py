@@ -63,7 +63,7 @@ def format_date(val):
     return s
 
 def main():
-    print("機関投資家空売りデータ取得（英字コード・ETF除外対応版）を開始します...")
+    print("機関投資家空売りデータ取得（英字コード・ETF除外・義務消失判定対応版）を開始します...")
     creds_json = os.environ.get("GCP_SERVICE_ACCOUNT_KEY")
     sheet_id = os.environ.get("SHORT_SPREADSHEET_ID")
     
@@ -116,6 +116,11 @@ def main():
         prev_calc_date = format_date(row.iloc[13])
         prev_ratio = clean_float(row.iloc[14])
 
+        # 【義務消失判定の正規化】
+        # 残高割合が 0.5% (0.005) 未満、または 0 の場合は義務消失届のため shares を 0 株とする
+        if ratio < 0.005 or ratio == 0.0:
+            shares = 0
+
         parsed_rows.append([
             disclosure_date,
             calc_date,
@@ -149,7 +154,7 @@ def main():
     filtered_rows = [row for row in data_rows if len(row) > 0 and row[0] >= cutoff_date_str]
     filtered_rows.extend(parsed_rows)
 
-    # 6. シートへ書き込み（キーワード引数で非推奨警告を解消）
+    # 6. シートへ書き込み（キーワード引数指定）
     worksheet.clear()
     worksheet.update(range_name='A1', values=[headers] + filtered_rows)
     print(f"スプレッドシート更新完了: 公表日={disclosure_date}, 総行数={len(filtered_rows)} 件")
