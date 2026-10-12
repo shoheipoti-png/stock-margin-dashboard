@@ -113,7 +113,7 @@ def render_institution_summary_html(institutions, title_label):
     return html
 
 def render_main_table_html(sorted_dates, institutions, short_map, total_short_by_date, margin_map, stock_prices):
-    """メインHTMLテーブル（確定値・未確定引継ぎ値・消失ステータス対応版）"""
+    """メインHTMLテーブル（確定値・引継ぎ値・消失ステータス完全対応版）"""
     inst_count = len(institutions)
     
     header_tr1 = (
@@ -140,40 +140,37 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
     )
 
     # -------------------------------------------------------------
-    # 機関ごとの時系列ポジション追跡（過去日付 -> 新しい日付の順に計算）
+    # 機関ごとの時系列ポジション追跡（過去日付 -> 最新日付へ走査）
     # -------------------------------------------------------------
     chronological_dates = list(reversed(sorted_dates))
     tracking_state = {inst: {"shares": 0, "status": "none"} for inst in institutions}
-    # status: 'none', 'active', 'released' (<0.5%消失)
 
-    daily_inst_display = {}   # (date, inst) -> (display_shares_str, diff_str, diff_col, diff_bg, is_confirmed, status)
-    daily_total_estimated = {} # date -> estimated_total_shares
-    daily_has_reports = {}    # date -> bool (その日に1件でも公表があったか)
+    daily_inst_display = {}
+    daily_total_estimated = {}
 
     for d in chronological_dates:
         day_has_report = any((d, inst) in short_map for inst in institutions)
-        daily_has_reports[d] = day_has_report
-        
         day_sum = 0
+        
         for inst in institutions:
             item = short_map.get((d, inst))
             if item:
                 shares, diff = item
+                # 0株、または義務消失データの場合は消失処理
                 if shares > 0:
                     tracking_state[inst] = {"shares": shares, "status": "active"}
                     d_str, d_col, d_bg = format_change(diff)
                     daily_inst_display[(d, inst)] = (smart_format(shares), d_str, d_col, d_bg, True, "active")
                     day_sum += shares
                 else:
-                    # 0株または0.5%未満で義務消失報告
                     tracking_state[inst] = {"shares": 0, "status": "released"}
                     daily_inst_display[(d, inst)] = ("<0.5%", "消失", "#888", "#f0f2f6", True, "released")
             else:
                 prev_status = tracking_state[inst]["status"]
                 prev_shares = tracking_state[inst]["shares"]
                 
-                # 当日その銘柄でいずれかの機関から報告が出ている日、かつ過去にポジションがある場合 -> 引継ぎ
-                if day_has_report and prev_status == "active":
+                # 当日他の機関で公表があり、かつ前日にポジションを維持している場合は引き継ぎ
+                if day_has_report and prev_status == "active" and prev_shares > 0:
                     daily_inst_display[(d, inst)] = (f"({smart_format(prev_shares)})", "-", "#666", "transparent", False, "active")
                     day_sum += prev_shares
                 elif prev_status == "released":
@@ -184,7 +181,7 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
         daily_total_estimated[d] = day_sum if day_has_report else None
 
     # -------------------------------------------------------------
-    # HTML行の生成（最新日付順に降順表示）
+    # HTML行の生成（最新日付順）
     # -------------------------------------------------------------
     rows_html = []
     for i, d in enumerate(sorted_dates):
@@ -214,14 +211,14 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
             )
             
             if status == "released" and is_confirmed:
-                # 消失した当日
+                # 消失した当日のみバッジ表示
                 inst_tds += (
                     '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 6px; background-color: #ffffff !important;">'
                     '<div style="font-weight: bold; font-size: 0.85em; color: #777777 !important; background-color: #f0f2f6; border-radius: 3px; padding: 2px;">消失 (&lt;0.5%)</div>'
                     '</td>'
                 )
             elif is_confirmed and status == "active":
-                # 確定公表値（黒字＋色付き増減バッジ）
+                # 確定公表値（黒太字＋増減カラーバッジ）
                 inst_tds += (
                     '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 6px; background-color: #ffffff !important; color: #1a1a1a !important;">'
                     f'<div style="font-weight: bold; font-size: 0.95em; color: #1a1a1a !important;">{sh_str}</div>'
@@ -229,7 +226,7 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
                     '</td>'
                 )
             elif not is_confirmed and status == "active":
-                # 未提出（直近値の引継ぎ：グレー文字＋括弧表示）
+                # 未提出（直近値の引継ぎ：薄いグレー背景＋グレー文字）
                 inst_tds += (
                     '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 6px; background-color: #fafbfc !important; color: #666666 !important;">'
                     f'<div style="font-size: 0.9em; color: #666666 !important;" title="直近の報告値を保持">{sh_str}</div>'
