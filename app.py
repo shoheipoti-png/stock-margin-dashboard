@@ -7,7 +7,8 @@ from data_loader import (
     clean_ticker_code,
     load_data_from_sheet,
     get_company_name_from_yahoo_japan,
-    get_stock_prices
+    get_stock_prices,
+    get_yahoo_realtime_and_pts
 )
 from chart_view import render_combined_chart
 from table_view import render_institution_summary_html, render_main_table_html
@@ -63,6 +64,7 @@ if ticker:
     df_short = load_data_from_sheet("short")
     company_name = get_company_name_from_yahoo_japan(clean_target)
     stock_prices = get_stock_prices(clean_target)
+    quote_info = get_yahoo_realtime_and_pts(clean_target)
 
     # 2. 銘柄ヘッダーとお気に入りボタン
     title_label = f"{clean_target}（{company_name}）" if company_name else clean_target
@@ -77,6 +79,35 @@ if ticker:
         if st.button(btn_label, use_container_width=True):
             toggle_favorite(clean_target, company_name)
             st.rerun()
+
+    # ----------------------------------------------------
+    # 株価情報・夜間PTS情報の表示ブロック
+    # ----------------------------------------------------
+    tse_price = f"{quote_info['price']} 円" if quote_info['price'] else "-"
+    if quote_info['change_val'] and quote_info['change_pct']:
+        tse_delta = f"{quote_info['change_val']} ({quote_info['change_pct']})"
+    else:
+        tse_delta = None
+
+    pts_price = f"{quote_info['pts_price']} 円" if quote_info['pts_price'] else "-"
+    if quote_info['pts_diff_val'] and quote_info['pts_diff_pct']:
+        pts_delta = f"{quote_info['pts_diff_val']} ({quote_info['pts_diff_pct']})"
+    else:
+        pts_delta = None
+
+    q_col1, q_col2, q_empty = st.columns([0.30, 0.30, 0.40])
+    with q_col1:
+        st.metric(
+            label="リアルタイム株価 / 前日比・騰落率",
+            value=tse_price,
+            delta=tse_delta
+        )
+    with q_col2:
+        st.metric(
+            label="夜間PTS株価 / 東証終値比",
+            value=pts_price,
+            delta=pts_delta
+        )
 
     # 3. 銘柄コード・期間によるフィルタリング
     if not df_margin.empty and "銘柄コード" in df_margin.columns:
@@ -129,7 +160,7 @@ if ticker:
                 prev_shares_by_inst[inst] = shares
                 short_map[(d_str, inst)] = (shares, diff)
 
-        # 過去日付順に各機関の最新ポジションを引き継いで合算（表と完全一致させるロジック）
+        # 過去日付順に各機関の最新ポジションを引き継いで合算
         running_inst_shares = {inst: 0 for inst in institutions}
         for d in sorted(sorted_dates):
             day_has_report = any((d, inst) in short_map for inst in institutions)
