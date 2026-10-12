@@ -63,7 +63,7 @@ def format_date(val):
     return s
 
 def main():
-    print("機関投資家空売りデータ取得（英字コード・ETF除外・義務消失判定対応版）を開始します...")
+    print("機関投資家空売りデータ取得（英字コード・ETF除外・過去ログ一括クレンジング対応版）を開始します...")
     creds_json = os.environ.get("GCP_SERVICE_ACCOUNT_KEY")
     sheet_id = os.environ.get("SHORT_SPREADSHEET_ID")
     
@@ -116,7 +116,7 @@ def main():
         prev_calc_date = format_date(row.iloc[13])
         prev_ratio = clean_float(row.iloc[14])
 
-        # 【義務消失判定の正規化】
+        # 【新規取得分の義務消失正規化】
         # 残高割合が 0.5% (0.005) 未満、または 0 の場合は義務消失届のため shares を 0 株とする
         if ratio < 0.005 or ratio == 0.0:
             shares = 0
@@ -137,13 +137,20 @@ def main():
     if not parsed_rows:
         raise ValueError("エラー: 抽出可能なデータが 0 件でした。ファイル形式変更の可能性があります。")
 
-    # 5. スプレッドシート既存データの取得と公表日ベースの上書きマージ
+    # 5. スプレッドシート既存データの取得と過去全銘柄の一括クレンジング
     headers = ["公表日", "計算年月日", "銘柄コード", "銘柄名", "機関名", "空売り残高割合", "空売り残高数量", "直近計算年月日", "直近空売り残高割合"]
     existing_data = worksheet.get_all_values()
     data_rows = []
 
     if existing_data and len(existing_data[0]) > 0 and existing_data[0][0] == "公表日":
-        data_rows = existing_data[1:]
+        for row in existing_data[1:]:
+            if len(row) >= 7:
+                # 【過去データ全銘柄一括クレンジング】
+                # F列(index 5): 空売り残高割合, G列(index 6): 空売り残高数量
+                ratio_val = clean_float(row[5])
+                if ratio_val < 0.005 or ratio_val == 0.0:
+                    row[6] = "0"  # 過去の全銘柄の0.5%未満データを一括で0株（義務消失）に正規化
+                data_rows.append(row)
 
     # 今回の公表日と同じデータを除外して置換
     data_rows = [row for row in data_rows if len(row) > 0 and row[0] != disclosure_date]
