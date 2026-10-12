@@ -84,20 +84,26 @@ if ticker:
     # 株価情報・夜間PTS情報の表示ブロック
     # ----------------------------------------------------
     tse_price = f"{quote_info['price']} 円" if quote_info['price'] else "-"
+    
+    # 東証の前日比・騰落率の結合フォーマット (例: +700 (+15.79%))
     if quote_info['change_val'] and quote_info['change_pct']:
         tse_delta = f"{quote_info['change_val']} ({quote_info['change_pct']})"
     elif quote_info['change_val']:
-        tse_delta = f"{quote_info['change_val']}"
+        tse_delta = quote_info['change_val']
     elif quote_info['change_pct']:
-        tse_delta = f"{quote_info['change_pct']}"
+        tse_delta = quote_info['change_pct']
     else:
         tse_delta = None
 
     pts_price = f"{quote_info['pts_price']} 円" if quote_info['pts_price'] else "-"
+    
+    # PTS終値比の結合フォーマット (例: +64 (+1.25%))
     if quote_info['pts_diff_val'] and quote_info['pts_diff_pct']:
         pts_delta = f"{quote_info['pts_diff_val']} ({quote_info['pts_diff_pct']})"
+    elif quote_info['pts_diff_val']:
+        pts_delta = quote_info['pts_diff_val']
     elif quote_info['pts_diff_pct']:
-        pts_delta = f"{quote_info['pts_diff_pct']}"
+        pts_delta = quote_info['pts_diff_pct']
     else:
         pts_delta = None
 
