@@ -113,7 +113,7 @@ def render_institution_summary_html(institutions, title_label):
     return html
 
 def render_main_table_html(sorted_dates, institutions, short_map, total_short_by_date, margin_map, stock_prices):
-    """メインHTMLテーブル（確定値・引継ぎ値・消失ステータス完全対応版）"""
+    """メインHTMLテーブル（全増減列を「総数＋増減」の2段表示に対応した版）"""
     inst_count = len(institutions)
     
     header_tr1 = (
@@ -124,7 +124,7 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
     if inst_count > 0:
         header_tr1 += f'<th colspan="{inst_count}" style="border: 1px solid #444; padding: 8px; text-align: center; color: #ffffff !important;">機関投資家の空売り</th>'
     header_tr1 += (
-        '<th rowspan="2" style="border: 1px solid #444; padding: 10px; text-align: center; width: 8%; color: #ffffff !important;">全増減</th>'
+        '<th rowspan="2" style="border: 1px solid #444; padding: 10px; text-align: center; width: 9%; color: #ffffff !important;">全増減<br>(合計)</th>'
         '<th colspan="2" style="border: 1px solid #444; padding: 8px; text-align: center; color: #ffffff !important;">個人信用 (合計・前日差・内訳)</th>'
         '</tr>'
     )
@@ -156,7 +156,6 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
             item = short_map.get((d, inst))
             if item:
                 shares, diff = item
-                # 0株、または義務消失データの場合は消失処理
                 if shares > 0:
                     tracking_state[inst] = {"shares": shares, "status": "active"}
                     d_str, d_col, d_bg = format_change(diff)
@@ -169,7 +168,6 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
                 prev_status = tracking_state[inst]["status"]
                 prev_shares = tracking_state[inst]["shares"]
                 
-                # 当日他の機関で公表があり、かつ前日にポジションを維持している場合は引き継ぎ
                 if day_has_report and prev_status == "active" and prev_shares > 0:
                     daily_inst_display[(d, inst)] = (f"({smart_format(prev_shares)})", "-", "#666", "transparent", False, "active")
                     day_sum += prev_shares
@@ -211,14 +209,12 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
             )
             
             if status == "released" and is_confirmed:
-                # 消失した当日のみバッジ表示
                 inst_tds += (
                     '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 6px; background-color: #ffffff !important;">'
                     '<div style="font-weight: bold; font-size: 0.85em; color: #777777 !important; background-color: #f0f2f6; border-radius: 3px; padding: 2px;">消失 (&lt;0.5%)</div>'
                     '</td>'
                 )
             elif is_confirmed and status == "active":
-                # 確定公表値（黒太字＋増減カラーバッジ）
                 inst_tds += (
                     '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 6px; background-color: #ffffff !important; color: #1a1a1a !important;">'
                     f'<div style="font-weight: bold; font-size: 0.95em; color: #1a1a1a !important;">{sh_str}</div>'
@@ -226,7 +222,6 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
                     '</td>'
                 )
             elif not is_confirmed and status == "active":
-                # 未提出（直近値の引継ぎ：薄いグレー背景＋グレー文字）
                 inst_tds += (
                     '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 6px; background-color: #fafbfc !important; color: #666666 !important;">'
                     f'<div style="font-size: 0.9em; color: #666666 !important;" title="直近の報告値を保持">{sh_str}</div>'
@@ -234,18 +229,27 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
                     '</td>'
                 )
             else:
-                # 未公表日またはポジションなし
                 inst_tds += '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 6px; background-color: #ffffff !important; color: #888888 !important;">-</td>'
 
-        # 全増減（推定保有合計の前日差）
+        # -------------------------------------------------------------
+        # 全増減列（上段：推定保有総数 / 下段：前日比増減バッジ の2段表示）
+        # -------------------------------------------------------------
         cur_tot = daily_total_estimated.get(d)
         prev_d = sorted_dates[i+1] if i + 1 < len(sorted_dates) else None
         prev_tot = daily_total_estimated.get(prev_d) if prev_d else None
 
-        if cur_tot is not None and prev_tot is not None:
-            all_diff = cur_tot - prev_tot
-            all_diff_str, all_diff_col, all_diff_bg = format_change(all_diff)
-            all_change_html = f'<div style="color: {all_diff_col} !important; background-color: {all_diff_bg} !important; font-size: 0.85em; padding: 2px; border-radius: 2px;">{all_diff_str}</div>'
+        if cur_tot is not None:
+            tot_str = smart_format(cur_tot)
+            if prev_tot is not None:
+                all_diff = cur_tot - prev_tot
+                all_diff_str, all_diff_col, all_diff_bg = format_change(all_diff)
+            else:
+                all_diff_str, all_diff_col, all_diff_bg = "-", "#666", "transparent"
+
+            all_change_html = (
+                f'<div style="font-weight: bold; font-size: 0.95em; color: #1a1a1a !important;">{tot_str}</div>'
+                f'<div style="color: {all_diff_col} !important; background-color: {all_diff_bg} !important; font-size: 0.8em; padding: 1px; border-radius: 2px; margin-top: 2px;">{all_diff_str}</div>'
+            )
         else:
             all_change_html = '<div style="color: #888888 !important;">-</div>'
 
@@ -271,7 +275,7 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
             f'<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #ffffff !important; color: #1a1a1a !important;">{date_str}</td>'
             f'<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #ffffff !important; color: #1a1a1a !important;">{price_cell_html}</td>'
             f'{inst_tds}'
-            f'<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #ffffff !important; color: #1a1a1a !important;">{all_change_html}</td>'
+            f'<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 6px; background-color: #ffffff !important; color: #1a1a1a !important;">{all_change_html}</td>'
             '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #ffffff !important; color: #1a1a1a !important;">'
             f'<div style="font-weight: bold; font-size: 1.05em; color: #1a1a1a !important;">{tot_sell}</div>'
             f'<div style="color: {sell_chg_color} !important; background-color: {sell_chg_bg} !important; font-size: 0.85em; padding: 2px; margin: 3px 0; border-radius: 2px;">{sell_chg_str}</div>'
