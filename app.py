@@ -168,13 +168,11 @@ if ticker:
                 prev_shares_by_inst[inst] = shares
                 short_map[(d_str, inst)] = (shares, diff)
 
-        # 過去日付順に各機関の最新ポジションを常時引き継いで合算
         running_inst_shares = {inst: 0 for inst in institutions}
         has_started = False
         latest_date = sorted_dates[0] if sorted_dates else None
 
         for d in sorted(sorted_dates):
-            # 当日新規の届出があれば更新
             day_has_report = any((d, inst) in short_map for inst in institutions)
             if day_has_report:
                 has_started = True
@@ -182,11 +180,9 @@ if ticker:
                     if (d, inst) in short_map:
                         running_inst_shares[inst] = short_map[(d, inst)][0]
 
-            # 最新営業日かつ届出が0件の場合は確定待ち（None）
             if d == latest_date and not day_has_report:
                 total_short_by_date[d] = None
             elif has_started:
-                # 届出が0件の日でも直前ポジションをそのまま維持（引き継ぎ）
                 total_short_by_date[d] = sum(running_inst_shares.values())
             else:
                 total_short_by_date[d] = None
@@ -208,13 +204,14 @@ if ticker:
             prev_sell, prev_buy = cur_sell, cur_buy
             margin_map[d_str] = {"row": r, "sell_diff": sell_diff, "buy_diff": buy_diff}
 
-    # 5. グラフ用データの整形と描画（同一株数軸）
+    # 5. グラフ用データの整形と描画
     graph_dates = sorted(sorted_dates)
     buy_shares_list = []
     sell_shares_list = []
     inst_shares_list = []
     vol_list = []
     vol_colors = []
+    price_list = []
 
     for d in graph_dates:
         m_info = margin_map.get(d)
@@ -232,17 +229,35 @@ if ticker:
 
         p_info = stock_prices.get(d)
         if p_info:
-            vol = p_info["volume"]
-            pct = p_info["pct"]
+            vol = p_info.get("volume", 0)
+            pct = p_info.get("pct", 0)
+            close = p_info.get("close")
             vol_list.append(vol)
+            price_list.append(close)
             if pct > 0: vol_colors.append("rgba(239, 83, 80, 0.45)")
             elif pct < 0: vol_colors.append("rgba(66, 165, 245, 0.45)")
             else: vol_colors.append("rgba(189, 189, 189, 0.45)")
         else:
             vol_list.append(0)
             vol_colors.append("rgba(189, 189, 189, 0.30)")
+            price_list.append(None)
 
-    fig = render_combined_chart(graph_dates, buy_shares_list, sell_shares_list, inst_shares_list, vol_list, vol_colors, title_label)
+    # グラフ直前の表示切り替えコントロール
+    c_check, c_space = st.columns([0.4, 0.6])
+    with c_check:
+        show_price = st.checkbox("📈 株価推移（右軸）を表示", value=True)
+
+    fig = render_combined_chart(
+        graph_dates, 
+        buy_shares_list, 
+        sell_shares_list, 
+        inst_shares_list, 
+        vol_list, 
+        vol_colors, 
+        title_label,
+        price_list=price_list,
+        show_price_line=show_price
+    )
     st.plotly_chart(
         fig, 
         use_container_width=True, 
