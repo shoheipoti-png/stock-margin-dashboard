@@ -113,7 +113,7 @@ def render_institution_summary_html(institutions, title_label):
     return html
 
 def render_main_table_html(sorted_dates, institutions, short_map, total_short_by_date, margin_map, stock_prices):
-    """メインHTMLテーブル（全増減列を「総数＋増減」の2段表示に対応した版）"""
+    """メインHTMLテーブル（全営業日キャリーオーバー＆総数+増減2段表示版）"""
     inst_count = len(institutions)
     
     header_tr1 = (
@@ -147,11 +147,17 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
 
     daily_inst_display = {}
     daily_total_estimated = {}
+    has_started = False
+    latest_date = sorted_dates[0] if sorted_dates else None
 
     for d in chronological_dates:
         day_has_report = any((d, inst) in short_map for inst in institutions)
+        if day_has_report:
+            has_started = True
+
         day_sum = 0
-        
+        is_pending_day = (d == latest_date and not day_has_report)
+
         for inst in institutions:
             item = short_map.get((d, inst))
             if item:
@@ -168,7 +174,11 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
                 prev_status = tracking_state[inst]["status"]
                 prev_shares = tracking_state[inst]["shares"]
                 
-                if day_has_report and prev_status == "active" and prev_shares > 0:
+                # 最新確定待ち日は未記載（-）
+                if is_pending_day:
+                    daily_inst_display[(d, inst)] = ("-", "-", "#888", "transparent", False, "none")
+                # 過去営業日は1社も届出がなくても引き継ぐ
+                elif has_started and prev_status == "active" and prev_shares > 0:
                     daily_inst_display[(d, inst)] = (f"({smart_format(prev_shares)})", "-", "#666", "transparent", False, "active")
                     day_sum += prev_shares
                 elif prev_status == "released":
@@ -176,7 +186,7 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
                 else:
                     daily_inst_display[(d, inst)] = ("-", "-", "#888", "transparent", False, "none")
 
-        daily_total_estimated[d] = day_sum if day_has_report else None
+        daily_total_estimated[d] = day_sum if (has_started and not is_pending_day) else None
 
     # -------------------------------------------------------------
     # HTML行の生成（最新日付順）
@@ -232,7 +242,7 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
                 inst_tds += '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 6px; background-color: #ffffff !important; color: #888888 !important;">-</td>'
 
         # -------------------------------------------------------------
-        # 全増減列（上段：推定保有総数 / 下段：前日比増減バッジ の2段表示）
+        # 全増減列（上段：推定保有総数 / 下段：前日比増減バッジ）
         # -------------------------------------------------------------
         cur_tot = daily_total_estimated.get(d)
         prev_d = sorted_dates[i+1] if i + 1 < len(sorted_dates) else None
