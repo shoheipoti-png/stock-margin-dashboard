@@ -1,60 +1,73 @@
 import plotly.graph_objects as go
-from analytics import SupplyDemandModel
 
-def render_combined_chart(model: SupplyDemandModel, show_price_line: bool = True):
+def render_combined_chart(*args, **kwargs):
     """
-    SupplyDemandModelから信用残・機関空売り・出来高および株価（右軸）を描画
+    信用残・機関空売り・出来高および株価（右軸）を描画
+    新設計（model単体渡し）と旧仕様（多引数渡し）の両方に自動対応
     """
+    # 1. 引数の自動判定
+    if "model" in kwargs or (len(args) > 0 and hasattr(args[0], "dates")):
+        model = kwargs.get("model", args[0])
+        show_price_line = kwargs.get("show_price_line", True)
+        if len(args) > 1:
+            show_price_line = args[1]
+
+        graph_dates = sorted(model.dates)
+        title_label = model.title_label
+        
+        vol_list = []
+        vol_colors = []
+        buy_shares = []
+        sell_shares = []
+        inst_shares = []
+        price_list = []
+
+        for d in graph_dates:
+            p_info = model.price_records.get(d)
+            if p_info:
+                vol = p_info.get("volume", 0)
+                pct = p_info.get("pct", 0)
+                close = p_info.get("close")
+                vol_list.append(vol)
+                price_list.append(close)
+                if pct > 0: vol_colors.append("rgba(239, 83, 80, 0.45)")
+                elif pct < 0: vol_colors.append("rgba(66, 165, 245, 0.45)")
+                else: vol_colors.append("rgba(189, 189, 189, 0.45)")
+            else:
+                vol_list.append(0)
+                vol_colors.append("rgba(189, 189, 189, 0.30)")
+                price_list.append(None)
+
+            m_info = model.margin_records.get(d)
+            if m_info:
+                r = m_info["row"]
+                try: b_val = float(str(r.get("買残(合計)", 0)).replace(',', ''))
+                except: b_val = None
+                try: s_val = float(str(r.get("売残(合計)", 0)).replace(',', ''))
+                except: s_val = None
+            else:
+                b_val, s_val = None, None
+            buy_shares.append(b_val)
+            sell_shares.append(s_val)
+
+            inst_shares.append(model.total_short_by_date.get(d, None))
+
+    else:
+        # 旧形式の引数フォールバック
+        graph_dates = args[0] if len(args) > 0 else kwargs.get("graph_dates", [])
+        buy_shares = args[1] if len(args) > 1 else kwargs.get("buy_shares", [])
+        sell_shares = args[2] if len(args) > 2 else kwargs.get("sell_shares", [])
+        inst_shares = args[3] if len(args) > 3 else kwargs.get("inst_shares", [])
+        vol_list = args[4] if len(args) > 4 else kwargs.get("vol_list", [])
+        vol_colors = args[5] if len(args) > 5 else kwargs.get("vol_colors", [])
+        title_label = args[6] if len(args) > 6 else kwargs.get("title_label", "")
+        price_list = kwargs.get("price_list", args[7] if len(args) > 7 else None)
+        show_price_line = kwargs.get("show_price_line", args[8] if len(args) > 8 else True)
+
+    # 2. グラフ描画
     fig = go.Figure()
 
-    # 時系列データの展開（グラフ用：過去から未来への昇順）
-    graph_dates = sorted(model.dates)
-    
-    vol_list = []
-    vol_colors = []
-    buy_shares = []
-    sell_shares = []
-    inst_shares = []
-    price_list = []
-
-    for d in graph_dates:
-        # 1. 出来高・株価
-        p_info = model.price_records.get(d)
-        if p_info:
-            vol = p_info.get("volume", 0)
-            pct = p_info.get("pct", 0)
-            close = p_info.get("close")
-            vol_list.append(vol)
-            price_list.append(close)
-            if pct > 0:
-                vol_colors.append("rgba(239, 83, 80, 0.45)")
-            elif pct < 0:
-                vol_colors.append("rgba(66, 165, 245, 0.45)")
-            else:
-                vol_colors.append("rgba(189, 189, 189, 0.45)")
-        else:
-            vol_list.append(0)
-            vol_colors.append("rgba(189, 189, 189, 0.30)")
-            price_list.append(None)
-
-        # 2. 個人信用（買残・売残）
-        m_info = model.margin_records.get(d)
-        if m_info:
-            r = m_info["row"]
-            try: b_val = float(str(r.get("買残(合計)", 0)).replace(',', ''))
-            except: b_val = None
-            try: s_val = float(str(r.get("売残(合計)", 0)).replace(',', ''))
-            except: s_val = None
-        else:
-            b_val, s_val = None, None
-        buy_shares.append(b_val)
-        sell_shares.append(s_val)
-
-        # 3. 機関空売り合計
-        inst_shares.append(model.total_short_by_date.get(d, None))
-
-    # --- トレース追加 ---
-    # 出来高（棒グラフ：前日比カラー、左軸）
+    # 出来高（棒グラフ）
     fig.add_trace(
         go.Bar(
             x=graph_dates, y=vol_list,
@@ -65,7 +78,7 @@ def render_combined_chart(model: SupplyDemandModel, show_price_line: bool = True
         )
     )
 
-    # 個人買残（赤線、左軸）
+    # 個人買残（赤線）
     fig.add_trace(
         go.Scatter(
             x=graph_dates, y=buy_shares,
@@ -76,7 +89,7 @@ def render_combined_chart(model: SupplyDemandModel, show_price_line: bool = True
         )
     )
 
-    # 個人売残（青線、左軸）
+    # 個人売残（青線）
     fig.add_trace(
         go.Scatter(
             x=graph_dates, y=sell_shares,
@@ -87,7 +100,7 @@ def render_combined_chart(model: SupplyDemandModel, show_price_line: bool = True
         )
     )
 
-    # 機関空売り合計（オレンジ点線、左軸）
+    # 機関空売り合計（オレンジ点線）
     if any(v is not None and v > 0 for v in inst_shares):
         fig.add_trace(
             go.Scatter(
@@ -99,7 +112,7 @@ def render_combined_chart(model: SupplyDemandModel, show_price_line: bool = True
             )
         )
 
-    # 株価終値（濃グレー実線、右軸）※チェック時のみ描画
+    # 株価終値（濃グレー実線、右軸）
     if show_price_line and price_list and any(p is not None for p in price_list):
         fig.add_trace(
             go.Scatter(
@@ -112,9 +125,8 @@ def render_combined_chart(model: SupplyDemandModel, show_price_line: bool = True
             )
         )
 
-    # レイアウト設定
     layout_args = dict(
-        title=f"{model.title_label} 信用残・機関空売り・出来高推移",
+        title=f"{title_label} 信用残・機関空売り・出来高推移",
         dragmode=False,
         hovermode="x unified",
         margin=dict(l=40, r=50 if show_price_line else 40, t=50, b=30),
