@@ -84,8 +84,6 @@ if ticker:
     # 株価情報・夜間PTS情報の表示ブロック
     # ----------------------------------------------------
     tse_price = f"{quote_info['price']} 円" if quote_info['price'] else "-"
-    
-    # 東証の前日比・騰落率の結合フォーマット (例: +700 (+15.79%))
     if quote_info['change_val'] and quote_info['change_pct']:
         tse_delta = f"{quote_info['change_val']} ({quote_info['change_pct']})"
     elif quote_info['change_val']:
@@ -96,8 +94,6 @@ if ticker:
         tse_delta = None
 
     pts_price = f"{quote_info['pts_price']} 円" if quote_info['pts_price'] else "-"
-    
-    # PTS終値比の結合フォーマット (例: +64 (+1.25%))
     if quote_info['pts_diff_val'] and quote_info['pts_diff_pct']:
         pts_delta = f"{quote_info['pts_diff_val']} ({quote_info['pts_diff_pct']})"
     elif quote_info['pts_diff_val']:
@@ -172,13 +168,25 @@ if ticker:
                 prev_shares_by_inst[inst] = shares
                 short_map[(d_str, inst)] = (shares, diff)
 
+        # 過去日付順に各機関の最新ポジションを常時引き継いで合算
         running_inst_shares = {inst: 0 for inst in institutions}
+        has_started = False
+        latest_date = sorted_dates[0] if sorted_dates else None
+
         for d in sorted(sorted_dates):
+            # 当日新規の届出があれば更新
             day_has_report = any((d, inst) in short_map for inst in institutions)
             if day_has_report:
+                has_started = True
                 for inst in institutions:
                     if (d, inst) in short_map:
                         running_inst_shares[inst] = short_map[(d, inst)][0]
+
+            # 最新営業日かつ届出が0件の場合は確定待ち（None）
+            if d == latest_date and not day_has_report:
+                total_short_by_date[d] = None
+            elif has_started:
+                # 届出が0件の日でも直前ポジションをそのまま維持（引き継ぎ）
                 total_short_by_date[d] = sum(running_inst_shares.values())
             else:
                 total_short_by_date[d] = None
