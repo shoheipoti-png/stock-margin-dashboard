@@ -1,6 +1,6 @@
 import plotly.graph_objects as go
 
-def render_combined_chart(graph_dates, buy_shares, sell_shares, inst_shares, vol_list, vol_colors, title_label, price_list=None, show_price_line=True):
+def render_combined_chart(graph_dates, buy_shares, sell_shares, inst_shares, vol_list, vol_colors, title_label, price_list=None, show_price_line=True, *args, **kwargs):
     """信用残・機関空売り・出来高および株価（右軸）を描画"""
     fig = go.Figure()
 
