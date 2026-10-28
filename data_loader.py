@@ -89,7 +89,6 @@ def get_yahoo_realtime_and_pts(ticker_code):
         
         soup = BeautifulSoup(res.text, 'html.parser')
 
-        # 1. 東証リアルタイム株価
         price_box = soup.find(class_=re.compile(r'CommonPriceBoard__price\b|CommonPriceBoard__price__'))
         if price_box:
             val_span = price_box.find('span', class_=re.compile(r'StyledNumber__value'))
@@ -105,7 +104,6 @@ def get_yahoo_realtime_and_pts(ticker_code):
                         result["price"] = txt
                         break
 
-        # 2. 東証の前日比・騰落率
         primary_box = soup.find(class_=re.compile(r'PriceChangeLabel__primary'))
         if primary_box:
             val_span = primary_box.find('span', class_=re.compile(r'StyledNumber__value'))
@@ -119,7 +117,6 @@ def get_yahoo_realtime_and_pts(ticker_code):
                 raw_pct = pct_span.get_text().strip()
                 result["change_pct"] = f"{raw_pct}%" if not raw_pct.endswith('%') else raw_pct
 
-        # 3. 夜間PTS株価 & 東証終値比
         pts_price_box = soup.find(class_=re.compile(r'CommonPriceBoard__ptsPrice'))
         if pts_price_box:
             pts_val_span = pts_price_box.find('span', class_=re.compile(r'StyledNumber__value'))
