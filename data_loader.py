@@ -89,17 +89,13 @@ def get_yahoo_realtime_and_pts(ticker_code):
         
         soup = BeautifulSoup(res.text, 'html.parser')
 
-        # -------------------------------------------------------------
         # 1. 東証リアルタイム株価
-        # DevToolsより: CommonPriceBoard__price 内の StyledNumber__value
-        # -------------------------------------------------------------
         price_box = soup.find(class_=re.compile(r'CommonPriceBoard__price\b|CommonPriceBoard__price__'))
         if price_box:
             val_span = price_box.find('span', class_=re.compile(r'StyledNumber__value'))
             if val_span:
                 result["price"] = val_span.get_text().strip()
         
-        # フォールバック
         if not result["price"]:
             for sp in soup.find_all(class_=re.compile(r'[Pp]rice')):
                 val_span = sp.find('span', class_=re.compile(r'StyledNumber__value'))
@@ -109,9 +105,7 @@ def get_yahoo_realtime_and_pts(ticker_code):
                         result["price"] = txt
                         break
 
-        # -------------------------------------------------------------
         # 2. 東証の前日比・騰落率
-        # -------------------------------------------------------------
         primary_box = soup.find(class_=re.compile(r'PriceChangeLabel__primary'))
         if primary_box:
             val_span = primary_box.find('span', class_=re.compile(r'StyledNumber__value'))
@@ -125,9 +119,7 @@ def get_yahoo_realtime_and_pts(ticker_code):
                 raw_pct = pct_span.get_text().strip()
                 result["change_pct"] = f"{raw_pct}%" if not raw_pct.endswith('%') else raw_pct
 
-        # -------------------------------------------------------------
         # 3. 夜間PTS株価 & 東証終値比
-        # -------------------------------------------------------------
         pts_price_box = soup.find(class_=re.compile(r'CommonPriceBoard__ptsPrice'))
         if pts_price_box:
             pts_val_span = pts_price_box.find('span', class_=re.compile(r'StyledNumber__value'))
@@ -168,7 +160,7 @@ def get_yahoo_realtime_and_pts(ticker_code):
 
 @st.cache_data(ttl=3600)
 def get_stock_prices(ticker_code):
-    """yfinanceから株価履歴・出来高を取得"""
+    """yfinanceから株価履歴（終値・騰落率・出来高）を取得"""
     clean_code = clean_ticker_code(ticker_code)
     prices = {}
     try:
@@ -180,6 +172,7 @@ def get_stock_prices(ticker_code):
             for dt, row in hist.iterrows():
                 d_str = dt.strftime("%Y-%m-%d")
                 prices[d_str] = {
+                    "close": float(row['Close']) if pd.notna(row['Close']) else None,
                     "pct": row['Pct'] if pd.notna(row['Pct']) else 0.0,
                     "volume": int(row['Volume']) if pd.notna(row['Volume']) else 0
                 }
