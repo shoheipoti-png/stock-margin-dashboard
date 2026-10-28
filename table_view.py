@@ -113,13 +113,15 @@ def render_institution_summary_html(institutions, title_label):
     return html
 
 def render_main_table_html(sorted_dates, institutions, short_map, total_short_by_date, margin_map, stock_prices):
-    """メインHTMLテーブル（全営業日キャリーオーバー＆総数+増減2段表示版）"""
+    """メインHTMLテーブル（株価終値/前日比 + 出来高列追加、全営業日引き継ぎ版）"""
     inst_count = len(institutions)
     
+    # ヘッダー1段目
     header_tr1 = (
         '<tr style="background-color: #262730 !important; color: #ffffff !important;">'
-        '<th rowspan="2" style="border: 1px solid #444; padding: 10px; text-align: center; width: 8%; color: #ffffff !important;">Date</th>'
-        '<th rowspan="2" style="border: 1px solid #444; padding: 10px; text-align: center; width: 10%; color: #ffffff !important;">前日比<br>出来高</th>'
+        '<th rowspan="2" style="border: 1px solid #444; padding: 10px; text-align: center; width: 7%; color: #ffffff !important;">Date</th>'
+        '<th rowspan="2" style="border: 1px solid #444; padding: 10px; text-align: center; width: 9%; color: #ffffff !important;">株価<br>前日比</th>'
+        '<th rowspan="2" style="border: 1px solid #444; padding: 10px; text-align: center; width: 8%; color: #ffffff !important;">出来高</th>'
     )
     if inst_count > 0:
         header_tr1 += f'<th colspan="{inst_count}" style="border: 1px solid #444; padding: 8px; text-align: center; color: #ffffff !important;">機関投資家の空売り</th>'
@@ -129,13 +131,14 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
         '</tr>'
     )
 
+    # ヘッダー2段目
     header_tr2 = '<tr style="background-color: #3b3c43 !important; color: #ffffff !important;">'
     for idx, inst in enumerate(institutions, 1):
         short_label = get_short_inst_name(inst)
         header_tr2 += f'<th style="border: 1px solid #555; padding: 6px; text-align: center; color: #ffffff !important;" title="{inst}">{idx}<br>{short_label}</th>'
     header_tr2 += (
-        '<th style="border: 1px solid #555; padding: 6px; text-align: center; width: 18%; color: #ffffff !important;">売</th>'
-        '<th style="border: 1px solid #555; padding: 6px; text-align: center; width: 18%; color: #ffffff !important;">買</th>'
+        '<th style="border: 1px solid #555; padding: 6px; text-align: center; width: 17%; color: #ffffff !important;">売</th>'
+        '<th style="border: 1px solid #555; padding: 6px; text-align: center; width: 17%; color: #ffffff !important;">買</th>'
         '</tr>'
     )
 
@@ -174,10 +177,8 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
                 prev_status = tracking_state[inst]["status"]
                 prev_shares = tracking_state[inst]["shares"]
                 
-                # 最新確定待ち日は未記載（-）
                 if is_pending_day:
                     daily_inst_display[(d, inst)] = ("-", "-", "#888", "transparent", False, "none")
-                # 過去営業日は1社も届出がなくても引き継ぐ
                 elif has_started and prev_status == "active" and prev_shares > 0:
                     daily_inst_display[(d, inst)] = (f"({smart_format(prev_shares)})", "-", "#666", "transparent", False, "active")
                     day_sum += prev_shares
@@ -199,17 +200,24 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
         except:
             date_str = d
 
-        # 株価・出来高
+        # 株価・前日比 & 出来高
         price_info = stock_prices.get(d)
         if price_info:
-            pct_str, pct_color = format_pct(price_info["pct"])
-            vol_str = smart_format(price_info["volume"])
+            pct_str, pct_color = format_pct(price_info.get("pct", 0))
+            close_val = price_info.get("close")
+            close_str = f"{close_val:,.0f}" if close_val is not None else "-"
+            vol_str = smart_format(price_info.get("volume", 0))
+            
+            # 株価終値（上段） + 前日比（下段）
             price_cell_html = (
-                f'<div style="font-weight: bold; color: {pct_color} !important; font-size: 0.95em;">{pct_str}</div>'
-                f'<div style="font-weight: bold; color: #222222 !important; font-size: 1.05em; margin-top: 3px;">{vol_str}</div>'
+                f'<div style="font-weight: bold; color: #1a1a1a !important; font-size: 1.0em;">{close_str}</div>'
+                f'<div style="font-weight: 500; color: {pct_color} !important; font-size: 0.85em; margin-top: 2px;">{pct_str}</div>'
             )
+            # 出来高専用セル
+            vol_cell_html = f'<div style="font-weight: bold; color: #222222 !important; font-size: 0.95em;">{vol_str}</div>'
         else:
             price_cell_html = '<div style="color: #666666 !important;">-</div>'
+            vol_cell_html = '<div style="color: #666666 !important;">-</div>'
 
         # 機関列のセル描画
         inst_tds = ""
@@ -241,9 +249,7 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
             else:
                 inst_tds += '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 6px; background-color: #ffffff !important; color: #888888 !important;">-</td>'
 
-        # -------------------------------------------------------------
-        # 全増減列（上段：推定保有総数 / 下段：前日比増減バッジ）
-        # -------------------------------------------------------------
+        # 全増減列
         cur_tot = daily_total_estimated.get(d)
         prev_d = sorted_dates[i+1] if i + 1 < len(sorted_dates) else None
         prev_tot = daily_total_estimated.get(prev_d) if prev_d else None
@@ -284,6 +290,7 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
             '<tr style="background-color: #ffffff !important;">'
             f'<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #ffffff !important; color: #1a1a1a !important;">{date_str}</td>'
             f'<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #ffffff !important; color: #1a1a1a !important;">{price_cell_html}</td>'
+            f'<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #ffffff !important; color: #1a1a1a !important;">{vol_cell_html}</td>'
             f'{inst_tds}'
             f'<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 6px; background-color: #ffffff !important; color: #1a1a1a !important;">{all_change_html}</td>'
             '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #ffffff !important; color: #1a1a1a !important;">'
