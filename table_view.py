@@ -116,7 +116,6 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
     """メインHTMLテーブル（株価終値/前日比 + 出来高列追加、全営業日引き継ぎ版）"""
     inst_count = len(institutions)
     
-    # ヘッダー1段目
     header_tr1 = (
         '<tr style="background-color: #262730 !important; color: #ffffff !important;">'
         '<th rowspan="2" style="border: 1px solid #444; padding: 10px; text-align: center; width: 7%; color: #ffffff !important;">Date</th>'
@@ -131,7 +130,6 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
         '</tr>'
     )
 
-    # ヘッダー2段目
     header_tr2 = '<tr style="background-color: #3b3c43 !important; color: #ffffff !important;">'
     for idx, inst in enumerate(institutions, 1):
         short_label = get_short_inst_name(inst)
@@ -142,9 +140,6 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
         '</tr>'
     )
 
-    # -------------------------------------------------------------
-    # 機関ごとの時系列ポジション追跡（過去日付 -> 最新日付へ走査）
-    # -------------------------------------------------------------
     chronological_dates = list(reversed(sorted_dates))
     tracking_state = {inst: {"shares": 0, "status": "none"} for inst in institutions}
 
@@ -189,9 +184,6 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
 
         daily_total_estimated[d] = day_sum if (has_started and not is_pending_day) else None
 
-    # -------------------------------------------------------------
-    # HTML行の生成（最新日付順）
-    # -------------------------------------------------------------
     rows_html = []
     for i, d in enumerate(sorted_dates):
         try:
@@ -200,7 +192,6 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
         except:
             date_str = d
 
-        # 株価・前日比 & 出来高
         price_info = stock_prices.get(d)
         if price_info:
             pct_str, pct_color = format_pct(price_info.get("pct", 0))
@@ -208,18 +199,15 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
             close_str = f"{close_val:,.0f}" if close_val is not None else "-"
             vol_str = smart_format(price_info.get("volume", 0))
             
-            # 株価終値（上段） + 前日比（下段）
             price_cell_html = (
                 f'<div style="font-weight: bold; color: #1a1a1a !important; font-size: 1.0em;">{close_str}</div>'
                 f'<div style="font-weight: 500; color: {pct_color} !important; font-size: 0.85em; margin-top: 2px;">{pct_str}</div>'
             )
-            # 出来高専用セル
             vol_cell_html = f'<div style="font-weight: bold; color: #222222 !important; font-size: 0.95em;">{vol_str}</div>'
         else:
             price_cell_html = '<div style="color: #666666 !important;">-</div>'
             vol_cell_html = '<div style="color: #666666 !important;">-</div>'
 
-        # 機関列のセル描画
         inst_tds = ""
         for inst in institutions:
             sh_str, d_str, d_col, d_bg, is_confirmed, status = daily_inst_display.get(
@@ -249,7 +237,6 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
             else:
                 inst_tds += '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 6px; background-color: #ffffff !important; color: #888888 !important;">-</td>'
 
-        # 全増減列
         cur_tot = daily_total_estimated.get(d)
         prev_d = sorted_dates[i+1] if i + 1 < len(sorted_dates) else None
         prev_tot = daily_total_estimated.get(prev_d) if prev_d else None
@@ -269,7 +256,6 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
         else:
             all_change_html = '<div style="color: #888888 !important;">-</div>'
 
-        # 個人信用
         m_info = margin_map.get(d)
         if m_info is not None:
             r = m_info["row"]
