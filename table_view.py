@@ -1,4 +1,5 @@
 import datetime
+from analytics import SupplyDemandModel
 
 INSTITUTION_SHORT_NAMES = {
     "barclays": "Barc",
@@ -21,14 +22,14 @@ INSTITUTION_SHORT_NAMES = {
     "jane street": "Jane",
 }
 
-def get_short_inst_name(full_name):
+def get_short_inst_name(full_name: str) -> str:
     if not full_name: return "その他"
     fn_lower = str(full_name).lower()
     for key, val in INSTITUTION_SHORT_NAMES.items():
         if key in fn_lower: return val
     return str(full_name)[:6]
 
-def smart_format(val):
+def smart_format(val) -> str:
     try:
         if val == "" or val is None or val == "-": return "-"
         num = float(str(val).replace(',', ''))
@@ -63,7 +64,7 @@ def format_pct(num):
     except:
         return "-", "#666"
 
-def render_institution_summary_html(institutions, title_label):
+def render_institution_summary_html(institutions: list, title_label: str) -> str:
     """上部の機関参加一覧ボックス"""
     if not institutions:
         return ""
@@ -112,8 +113,13 @@ def render_institution_summary_html(institutions, title_label):
     """
     return html
 
-def render_main_table_html(sorted_dates, institutions, short_map, total_short_by_date, margin_map, stock_prices):
-    """メインHTMLテーブル（株価終値/前日比・出来高のバッジカラー対応版）"""
+def render_main_table_html(model: SupplyDemandModel) -> str:
+    """
+    SupplyDemandModelを受け取ってメインHTMLテーブルを生成
+    （株価終値/前日比・出来高のバッジカラー対応、全営業日引き継ぎ反映済み）
+    """
+    institutions = model.institutions
+    sorted_dates = model.dates
     inst_count = len(institutions)
     
     header_tr1 = (
@@ -140,53 +146,6 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
         '</tr>'
     )
 
-    chronological_dates = list(reversed(sorted_dates))
-    tracking_state = {inst: {"shares": 0, "status": "none"} for inst in institutions}
-
-    daily_inst_display = {}
-    daily_total_estimated = {}
-    has_started = False
-    latest_date = sorted_dates[0] if sorted_dates else None
-
-    for d in chronological_dates:
-        day_has_report = any((d, inst) in short_map for inst in institutions)
-        if day_has_report:
-            has_started = True
-
-        day_sum = 0
-        is_pending_day = (d == latest_date and not day_has_report)
-
-        for inst in institutions:
-            item = short_map.get((d, inst))
-            if item:
-                shares, diff = item
-                if shares > 0:
-                    tracking_state[inst] = {"shares": shares, "status": "active"}
-                    d_str, d_col, d_bg = format_change(diff)
-                    daily_inst_display[(d, inst)] = (smart_format(shares), d_str, d_col, d_bg, True, "active")
-                    day_sum += shares
-                else:
-                    tracking_state[inst] = {"shares": 0, "status": "released"}
-                    daily_inst_display[(d, inst)] = ("<0.5%", "消失", "#888", "#f0f2f6", True, "released")
-            else:
-                prev_status = tracking_state[inst]["status"]
-                prev_shares = tracking_state[inst]["shares"]
-                
-                if is_pending_day:
-                    daily_inst_display[(d, inst)] = ("-", "-", "#888", "transparent", False, "none")
-                elif has_started and prev_status == "active" and prev_shares > 0:
-                    daily_inst_display[(d, inst)] = (f"({smart_format(prev_shares)})", "-", "#666", "transparent", False, "active")
-                    day_sum += prev_shares
-                elif prev_status == "released":
-                    daily_inst_display[(d, inst)] = ("-", "-", "#888", "transparent", False, "released")
-                else:
-                    daily_inst_display[(d, inst)] = ("-", "-", "#888", "transparent", False, "none")
-
-        daily_total_estimated[d] = day_sum if (has_started and not is_pending_day) else None
-
-    # -------------------------------------------------------------
-    # HTML行の生成（最新日付順）
-    # -------------------------------------------------------------
     rows_html = []
     for i, d in enumerate(sorted_dates):
         try:
@@ -195,21 +154,18 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
         except:
             date_str = d
 
-        # 前営業日のデータを取得（差分計算用）
+        # 前営業日の情報（差分計算用）
         prev_d = sorted_dates[i+1] if i + 1 < len(sorted_dates) else None
-        prev_price_info = stock_prices.get(prev_d) if prev_d else None
+        prev_price_info = model.price_records.get(prev_d) if prev_d else None
 
-        # ---------------------------------------------------------
-        # 株価・前日比 & 出来高のフォーマット
-        # ---------------------------------------------------------
-        price_info = stock_prices.get(d)
+        # 1. 株価・出来高セル
+        price_info = model.price_records.get(d)
         if price_info:
             pct_val = price_info.get("pct", 0)
             close_val = price_info.get("close")
             cur_vol = price_info.get("volume", 0)
             vol_str = smart_format(cur_vol)
 
-            # 1. 株価の増減値とカラー・背景
             if prev_price_info and close_val is not None and prev_price_info.get("close") is not None:
                 p_diff = close_val - prev_price_info["close"]
                 sign_diff = "+" if p_diff > 0 else ""
@@ -221,11 +177,11 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
             pct_display, _ = format_pct(pct_val)
 
             if pct_val > 0:
-                p_col, p_bg = "#d32f2f", "#ffebee"  # プラス：赤文字＋薄赤背景
+                p_col, p_bg = "#d32f2f", "#ffebee"
             elif pct_val < 0:
-                p_col, p_bg = "#1976d2", "#e3f2fd"  # マイナス：青文字＋薄青背景
+                p_col, p_bg = "#1976d2", "#e3f2fd"
             else:
-                p_col, p_bg = "#333333", "#f0f2f6"  # 変わらず：黒文字＋薄グレー背景
+                p_col, p_bg = "#333333", "#f0f2f6"
 
             price_cell_html = (
                 f'<div style="font-weight: bold; font-size: 0.95em; color: {p_col} !important; background-color: {p_bg} !important; padding: 2px 4px; border-radius: 3px; display: inline-block; white-space: nowrap;">'
@@ -236,13 +192,12 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
                 f'</div>'
             )
 
-            # 2. 出来高の増減カラー・背景
             if prev_price_info and cur_vol is not None and prev_price_info.get("volume") is not None:
                 v_diff = cur_vol - prev_price_info["volume"]
                 if v_diff > 0:
-                    v_col, v_bg = "#d32f2f", "#ffebee"  # 増加：赤文字＋薄赤背景
+                    v_col, v_bg = "#d32f2f", "#ffebee"
                 elif v_diff < 0:
-                    v_col, v_bg = "#1976d2", "#e3f2fd"  # 減少：青文字＋薄青背景
+                    v_col, v_bg = "#1976d2", "#e3f2fd"
                 else:
                     v_col, v_bg = "#333333", "#f0f2f6"
             else:
@@ -257,10 +212,10 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
             price_cell_html = '<div style="color: #666666 !important;">-</div>'
             vol_cell_html = '<div style="color: #666666 !important;">-</div>'
 
-        # 機関列のセル描画
+        # 2. 機関別セル（analytics側で算出済みの daily_inst_display を展開）
         inst_tds = ""
         for inst in institutions:
-            sh_str, d_str, d_col, d_bg, is_confirmed, status = daily_inst_display.get(
+            sh_str, d_str, d_col, d_bg, is_confirmed, status = model.daily_inst_display.get(
                 (d, inst), ("-", "-", "#888", "transparent", False, "none")
             )
             
@@ -287,9 +242,9 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
             else:
                 inst_tds += '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 6px; background-color: #ffffff !important; color: #888888 !important;">-</td>'
 
-        # 全増減列
-        cur_tot = daily_total_estimated.get(d)
-        prev_tot = daily_total_estimated.get(prev_d) if prev_d else None
+        # 3. 全増減セル
+        cur_tot = model.daily_total_estimated.get(d)
+        prev_tot = model.daily_total_estimated.get(prev_d) if prev_d else None
 
         if cur_tot is not None:
             tot_str = smart_format(cur_tot)
@@ -306,8 +261,8 @@ def render_main_table_html(sorted_dates, institutions, short_map, total_short_by
         else:
             all_change_html = '<div style="color: #888888 !important;">-</div>'
 
-        # 個人信用
-        m_info = margin_map.get(d)
+        # 4. 個人信用セル
+        m_info = model.margin_records.get(d)
         if m_info is not None:
             r = m_info["row"]
             tot_sell = smart_format(r.get("売残(合計)", "-"))
