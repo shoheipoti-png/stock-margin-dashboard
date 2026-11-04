@@ -125,7 +125,7 @@ if ticker:
             <div><span style="color: #666;">配当利回り:</span> <b>{fund_info.get('dividend_yield', '-')}</b></div>
             <div>
                 <span style="color: #666;">決算予定:</span> 
-                <span style="background-color: {s_bg}; color: {s_col}; padding: 2px 6px; border-radius: 4px; font-weight: bold; display: inline-block;">
+                <span style="background-color: {s_bg}; color: {s_col}; padding: 2px 8px; border-radius: 4px; font-weight: bold; display: inline-block;">
                     {s_date}
                 </span>
             </div>
