@@ -12,6 +12,16 @@ import streamlit as st
 DEFAULT_SPREADSHEET_ID = "1_YK99EVmXnTWHzE7oP9tO1jWYaxUiTinMyFQ-1n2M4g"
 DEFAULT_SHORT_SPREADSHEET_ID = "1Fdfmwq_6CBAG495JJD4EPgT7EOfyB9kZ_QAwU6pAXaU"
 
+# 東証33業種リスト（マッチング用）
+JPX_33_SECTORS = [
+    "水産・農林業", "鉱業", "建設業", "食料品", "繊維製品", "パルプ・紙", "化学",
+    "医薬品", "石油・石炭製品", "ゴム製品", "ガラス・土石製品", "鉄鋼", "非鉄金属",
+    "金属製品", "機械", "電気機器", "輸送用機器", "精密機器", "その他製品",
+    "電気・ガス業", "陸運業", "海運業", "空運業", "倉庫・運輸関連業", "情報・通信業",
+    "卸売業", "小売業", "銀行業", "証券、商品先物取引業", "保険業", "その他金融業",
+    "不動産業", "サービス業"
+]
+
 def clean_ticker_code(val):
     if pd.isna(val) or val is None:
         return ""
@@ -66,9 +76,7 @@ def get_company_name_from_yahoo_japan(ticker_code):
 
 @st.cache_data(ttl=60)
 def get_yahoo_realtime_and_pts(ticker_code):
-    """
-    Yahoo!ファイナンスから東証株価・前日比・騰落率および夜間PTS情報を完全抽出
-    """
+    """Yahoo!ファイナンスから東証株価・前日比・騰落率および夜間PTS情報を完全抽出"""
     clean_code = clean_ticker_code(ticker_code)
     url = f"https://finance.yahoo.co.jp/quote/{clean_code}.T"
     headers = {
@@ -206,7 +214,7 @@ def get_fundamentals_summary(ticker_code):
         page_text = res.text
         soup = BeautifulSoup(page_text, 'html.parser')
 
-        # 1. 市場判定（東証プライム、スタンダード、グロース）
+        # 1. 市場判定
         m_market = re.search(r'東証(プライム|スタンダード|グロース)', page_text)
         if m_market:
             data["market"] = m_market.group(1)
@@ -215,15 +223,29 @@ def get_fundamentals_summary(ticker_code):
             if m_gen:
                 data["market"] = m_gen.group(1)
 
-        # 2. 業種
-        cat_links = soup.find_all('a', href=re.compile(r'/categories/|/stocks/industry/'))
-        for cl in cat_links:
-            t = cl.get_text().strip()
-            if t and t not in ["株式", "国内株式", "業種別"]:
-                data["industry"] = t
-                break
+        # 2. 業種（東証33業種名から直接照合 + パンくず/リンクフォールバック）
+        m_ind = re.search(r'業種[：:\s]*([^\s<"]+)', page_text)
+        if m_ind and m_ind.group(1) in JPX_33_SECTORS:
+            data["industry"] = m_ind.group(1)
+        else:
+            # ページ内に出現する33業種キーワードを優先度の高い位置から探索
+            for sec in JPX_33_SECTORS:
+                if sec in page_text:
+                    # 関連業種リスト等ではなく、ヘッダー/サマリー周辺に含まれているものを採用
+                    header_area = page_text[:15000]
+                    if sec in header_area:
+                        data["industry"] = sec
+                        break
 
-        # 3. テキスト全体および定義リスト（dl/dt/dd, th/td）を精査
+        if data["industry"] == "-":
+            cat_links = soup.find_all('a', href=re.compile(r'/categories/|/stocks/industry/'))
+            for cl in cat_links:
+                t = cl.get_text().strip()
+                if t and t not in ["株式", "国内株式", "業種別", "一覧"]:
+                    data["industry"] = t
+                    break
+
+        # 3. テキスト全体および定義リストからの抽出
         dl_items = soup.find_all(['li', 'tr', 'div'])
         for item in dl_items:
             txt = item.get_text()
@@ -233,7 +255,6 @@ def get_fundamentals_summary(ticker_code):
                     val_num = float(m_cap.group(1).replace(',', ''))
                     unit = m_cap.group(2)
                     if unit == "百万円":
-                        # 百万円を「〜億円」「〜兆〜億円」へ見やすく整形
                         oku = val_num / 100.0
                         if oku >= 10000:
                             data["market_cap"] = f"{oku / 10000:.2f}兆円"
