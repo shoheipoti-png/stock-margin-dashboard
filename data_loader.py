@@ -27,6 +27,19 @@ def clean_ticker_code(val):
     s = str(val).split('.')[0].strip().upper()
     return s[:4] if len(s) >= 4 else s
 
+def deduce_quarter(fiscal_month: int, announce_month: int) -> str:
+    """決算月と発表予定月から第何四半期かを判定"""
+    diff = (announce_month - fiscal_month) % 12
+    if diff in [1, 2, 3]:
+        return " (本決算)"
+    elif diff in [4, 5, 6]:
+        return " (Q1)"
+    elif diff in [7, 8, 9]:
+        return " (Q2)"
+    elif diff in [10, 11, 0]:
+        return " (Q3)"
+    return ""
+
 @st.cache_data(ttl=60)
 def load_data_from_sheet(sheet_type="margin"):
     """Googleスプレッドシートからデータを取得"""
@@ -205,13 +218,22 @@ def get_fundamentals_summary(ticker_code):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
-    # 1. トップページから各種指標と決算日（日付直結の四半期判定）
+    fiscal_month = 3  # デフォルト（日本企業の多くは3月決算）
+    raw_settle_date = None
+    settle_announce_month = None
+
+    # 1. トップページから各種指標と決算日の取得
     url_quote = f"https://finance.yahoo.co.jp/quote/{clean_code}.T"
     try:
         res = requests.get(url_quote, headers=headers, timeout=6)
         if res.status_code == 200:
             page_text = res.text
             soup = BeautifulSoup(page_text, 'html.parser')
+
+            # 決算月（例: 決算期 3月末日、連3月 など）の事前判定
+            m_fisc = re.search(r'(?:決算期|決算月|事業年度)[^0-9]*(\d{1,2})月', page_text)
+            if m_fisc:
+                fiscal_month = int(m_fisc.group(1))
 
             # 市場判定
             m_market = re.search(r'東証(プライム|スタンダード|グロース)', page_text)
@@ -255,39 +277,25 @@ def get_fundamentals_summary(ticker_code):
                     if m_div:
                         data["dividend_yield"] = f"{m_div.group(1)}%"
 
-                # 決算発表予定日（日付の直後から四半期を特定）
-                if ("決算" in txt or "決算発表" in txt) and data["settlement_date"] == "-":
+                # 決算発表予定日の取得
+                if ("決算" in txt or "決算発表" in txt) and raw_settle_date is None:
                     m_date = re.search(r'(\d{4})[/-](\d{1,2})[/-](0?[1-9]|[12][0-9]|3[01])\b', txt)
                     if m_date:
                         y = m_date.group(1)
                         m = int(m_date.group(2))
                         d = int(m_date.group(3))
-                        date_str = f"{y}/{m:02d}/{d:02d}"
-
-                        # 日付の後ろに続くテキスト（後続20文字）から四半期を判定
-                        post_text = txt[m_date.end():m_date.end() + 20]
-                        quarter_str = ""
-                        m_q = re.search(r'(?:第?\s*([1-4])\s*四半期|([1-4])\s*Q|本決算|中間)', post_text)
-                        if m_q:
-                            if m_q.group(1):
-                                quarter_str = f" (Q{m_q.group(1)})"
-                            elif m_q.group(2):
-                                quarter_str = f" (Q{m_q.group(2)})"
-                            elif "本決算" in m_q.group(0):
-                                quarter_str = " (本決算)"
-                            elif "中間" in m_q.group(0):
-                                quarter_str = " (中間)"
-
-                        data["settlement_date"] = f"{date_str}{quarter_str}"
+                        raw_settle_date = f"{y}/{m:02d}/{d:02d}"
+                        settle_announce_month = m
 
             if "制度信用" in page_text and "貸借" not in page_text:
                 data["margin_type"] = "制度"
             elif "貸借" in page_text:
                 data["margin_type"] = "貸借"
+
     except Exception as e:
         print(f"Yahooファンダ取得エラー ({ticker_code}): {e}")
 
-    # 2. 企業プロファイルページから「業種」を取得
+    # 2. 企業プロファイルページから「業種」と「正確な本決算月」を取得
     url_profile = f"https://finance.yahoo.co.jp/quote/{clean_code}.T/profile"
     try:
         res_prof = requests.get(url_profile, headers=headers, timeout=5)
@@ -297,8 +305,19 @@ def get_fundamentals_summary(ticker_code):
                 txt = a_tag.get_text().strip()
                 if txt in JPX_33_SECTORS:
                     data["industry"] = txt
-                    break
+
+            # 決算期判定（例: 3月31日）
+            p_text = res_prof.text
+            m_fisc_p = re.search(r'決算期[^0-9]*(\d{1,2})月', p_text)
+            if m_fisc_p:
+                fiscal_month = int(m_fisc_p.group(1))
+
     except Exception as e:
         print(f"Yahooプロファイル取得エラー ({ticker_code}): {e}")
+
+    # 3. 決算発表日＋四半期文字列の組み立て
+    if raw_settle_date:
+        q_label = deduce_quarter(fiscal_month, settle_announce_month) if settle_announce_month else ""
+        data["settlement_date"] = f"{raw_settle_date}{q_label}"
 
     return data
