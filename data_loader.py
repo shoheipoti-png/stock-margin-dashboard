@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import datetime
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
@@ -201,7 +202,7 @@ def get_stock_prices(ticker_code):
 def get_fundamentals_summary(ticker_code):
     """
     Yahoo!ファイナンスから主要ファンダメンタルズ概要を抽出（6時間キャッシュ）
-    市場、時価総額、業種、PER、PBR、配当利回り、決算予定日（正確な四半期情報付き）
+    市場、時価総額、業種、PER、PBR、配当利回り、決算予定日（未発表時は直近発表実績を自動表示）
     """
     clean_code = clean_ticker_code(ticker_code)
     data = {
@@ -218,11 +219,12 @@ def get_fundamentals_summary(ticker_code):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
-    fiscal_month = 3  # デフォルト（日本企業の多くは3月決算）
-    raw_settle_date = None
-    settle_announce_month = None
+    fiscal_month = 3
+    today_str = datetime.date.today().strftime("%Y/%m/%d")
+    future_settle_date = None
+    future_announce_month = None
 
-    # 1. トップページから各種指標と決算日の取得
+    # 1. トップページから各種指標と「次回決算予定日」を取得
     url_quote = f"https://finance.yahoo.co.jp/quote/{clean_code}.T"
     try:
         res = requests.get(url_quote, headers=headers, timeout=6)
@@ -230,7 +232,7 @@ def get_fundamentals_summary(ticker_code):
             page_text = res.text
             soup = BeautifulSoup(page_text, 'html.parser')
 
-            # 決算月（例: 決算期 3月末日、連3月 など）の事前判定
+            # 決算期（月）の判定
             m_fisc = re.search(r'(?:決算期|決算月|事業年度)[^0-9]*(\d{1,2})月', page_text)
             if m_fisc:
                 fiscal_month = int(m_fisc.group(1))
@@ -244,12 +246,17 @@ def get_fundamentals_summary(ticker_code):
                 if m_gen:
                     data["market"] = m_gen.group(1)
 
-            dl_items = soup.find_all(['li', 'tr', 'div'])
-            for item in dl_items:
-                txt = item.get_text(separator=" ").strip()
+            # 定義リストや行単位で各項目を特定
+            for row in soup.find_all(['li', 'tr', 'div']):
+                dt = row.find(['dt', 'th', 'span'])
+                dd = row.find(['dd', 'td'])
+                if not dt or not dd:
+                    continue
+                label = dt.get_text().strip()
+                val = dd.get_text().strip()
 
-                if "時価総額" in txt and data["market_cap"] == "-":
-                    m_cap = re.search(r'([0-9,]+(?:\.[0-9]+)?)\s*(兆|億|百万円)', txt)
+                if "時価総額" in label and data["market_cap"] == "-":
+                    m_cap = re.search(r'([0-9,]+(?:\.[0-9]+)?)\s*(兆|億|百万円)', val)
                     if m_cap:
                         val_num = float(m_cap.group(1).replace(',', ''))
                         unit = m_cap.group(2)
@@ -262,40 +269,42 @@ def get_fundamentals_summary(ticker_code):
                         else:
                             data["market_cap"] = f"{m_cap.group(1)}{unit}円"
 
-                if ("PER" in txt or "ＰＥＲ" in txt) and data["per"] == "-":
-                    m_per = re.search(r'(?:PER|ＰＥＲ)[^0-9]*([0-9,]+(?:\.[0-9]+)?)\s*倍', txt)
+                if ("PER" in label or "ＰＥＲ" in label) and data["per"] == "-":
+                    m_per = re.search(r'([0-9,]+(?:\.[0-9]+)?)\s*倍', val)
                     if m_per:
                         data["per"] = f"{m_per.group(1)}倍"
 
-                if ("PBR" in txt or "ＰＢＲ" in txt) and data["pbr"] == "-":
-                    m_pbr = re.search(r'(?:PBR|ＰＢＲ)[^0-9]*([0-9,]+(?:\.[0-9]+)?)\s*倍', txt)
+                if ("PBR" in label or "ＰＢＲ" in label) and data["pbr"] == "-":
+                    m_pbr = re.search(r'([0-9,]+(?:\.[0-9]+)?)\s*倍', val)
                     if m_pbr:
                         data["pbr"] = f"{m_pbr.group(1)}倍"
 
-                if ("利回り" in txt or "配当" in txt) and data["dividend_yield"] == "-":
-                    m_div = re.search(r'(?:配当利回り|利回り)[^0-9%]*([0-9,]+(?:\.[0-9]+)?)\s*[%％]', txt)
+                if ("配当利回り" in label or "利回り" in label) and data["dividend_yield"] == "-":
+                    m_div = re.search(r'([0-9,]+(?:\.[0-9]+)?)\s*[%％]', val)
                     if m_div:
                         data["dividend_yield"] = f"{m_div.group(1)}%"
 
-                # 決算発表予定日の取得
-                if ("決算" in txt or "決算発表" in txt) and raw_settle_date is None:
-                    m_date = re.search(r'(\d{4})[/-](\d{1,2})[/-](0?[1-9]|[12][0-9]|3[01])\b', txt)
+                # 決算発表予定日（明確にラベル付けされた値のみチェック）
+                if "決算発表" in label and future_settle_date is None:
+                    m_date = re.search(r'(\d{4})[/-](\d{1,2})[/-](0?[1-9]|[12][0-9]|3[01])\b', val)
                     if m_date:
                         y = m_date.group(1)
                         m = int(m_date.group(2))
                         d = int(m_date.group(3))
-                        raw_settle_date = f"{y}/{m:02d}/{d:02d}"
-                        settle_announce_month = m
+                        cand_date = f"{y}/{m:02d}/{d:02d}"
+                        # 本日以降の未来日付である場合のみ「次回予定」として採用
+                        if cand_date >= today_str:
+                            future_settle_date = cand_date
+                            future_announce_month = m
 
             if "制度信用" in page_text and "貸借" not in page_text:
                 data["margin_type"] = "制度"
             elif "貸借" in page_text:
                 data["margin_type"] = "貸借"
-
     except Exception as e:
         print(f"Yahooファンダ取得エラー ({ticker_code}): {e}")
 
-    # 2. 企業プロファイルページから「業種」と「正確な本決算月」を取得
+    # 2. プロファイルページから「業種」と「本決算月」を取得
     url_profile = f"https://finance.yahoo.co.jp/quote/{clean_code}.T/profile"
     try:
         res_prof = requests.get(url_profile, headers=headers, timeout=5)
@@ -306,18 +315,47 @@ def get_fundamentals_summary(ticker_code):
                 if txt in JPX_33_SECTORS:
                     data["industry"] = txt
 
-            # 決算期判定（例: 3月31日）
             p_text = res_prof.text
             m_fisc_p = re.search(r'決算期[^0-9]*(\d{1,2})月', p_text)
             if m_fisc_p:
                 fiscal_month = int(m_fisc_p.group(1))
-
     except Exception as e:
         print(f"Yahooプロファイル取得エラー ({ticker_code}): {e}")
 
-    # 3. 決算発表日＋四半期文字列の組み立て
-    if raw_settle_date:
-        q_label = deduce_quarter(fiscal_month, settle_announce_month) if settle_announce_month else ""
-        data["settlement_date"] = f"{raw_settle_date}{q_label}"
+    # 3. 決算日の確定
+    if future_settle_date:
+        # A. 次回予定が公表されている場合（未来の日付）
+        q_label = deduce_quarter(fiscal_month, future_announce_month) if future_announce_month else ""
+        data["settlement_date"] = f"{future_settle_date}{q_label}"
+    else:
+        # B. 次回予定が未定（直近決算を終えたばかり）の場合：直近実績日を取得
+        url_fin = f"https://finance.yahoo.co.jp/quote/{clean_code}.T/financial"
+        past_settle_date = None
+        past_announce_month = None
+        try:
+            res_fin = requests.get(url_fin, headers=headers, timeout=5)
+            if res_fin.status_code == 200:
+                fin_soup = BeautifulSoup(res_fin.text, 'html.parser')
+                # 発表日リストから最も直近の過去日付（本日以前）を抽出
+                for tag in fin_soup.find_all(['td', 'th', 'span', 'li', 'time']):
+                    t_str = tag.get_text().strip()
+                    m_past = re.search(r'(\d{4})[/-](\d{1,2})[/-](0?[1-9]|[12][0-9]|3[01])\b', t_str)
+                    if m_past:
+                        y = m_past.group(1)
+                        m = int(m_past.group(2))
+                        d = int(m_past.group(3))
+                        cand_past = f"{y}/{m:02d}/{d:02d}"
+                        if cand_past <= today_str:
+                            if past_settle_date is None or cand_past > past_settle_date:
+                                past_settle_date = cand_past
+                                past_announce_month = m
+        except Exception as e:
+            print(f"Yahoo業績実績取得エラー ({ticker_code}): {e}")
+
+        if past_settle_date:
+            q_label = deduce_quarter(fiscal_month, past_announce_month) if past_announce_month else ""
+            data["settlement_date"] = f"{past_settle_date}{q_label}"
+        else:
+            data["settlement_date"] = "未定"
 
     return data
