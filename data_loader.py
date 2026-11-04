@@ -130,7 +130,7 @@ def get_yahoo_realtime_and_pts(ticker_code):
                 pts_sec = pts_parent.find_all(class_=re.compile(r'PriceChangeLabel'))
                 for sec in pts_sec:
                     sec_text = sec.get_text().strip()
-                    m = re.search(r'([+-]?[0-9,]+(?:\.[0-9]+)?)\s*\(?([+-]?[0-9.]+[\%％]?)\)?', sec_text)
+                    m = re.search(r'([+-]?[0-9,]+(?:\.[0-9]+)?)\s*\(?([+-]?[0-9.]+[%％]?)\)?', sec_text)
                     if m:
                         result["pts_diff_val"] = m.group(1).strip()
                         pct_val = m.group(2).strip()
@@ -213,4 +213,42 @@ def get_fundamentals_summary(ticker_code):
         if industry_tag:
             data["industry"] = industry_tag.get_text().strip()
 
-        # 2. テーブル（詳細情報ブロック）からの
+        # 2. テーブル（詳細情報ブロック）からの抽出
+        for dt_tag in soup.find_all(['dt', 'th']):
+            dt_text = dt_tag.get_text().strip()
+            dd_tag = dt_tag.find_next_sibling(['dd', 'td'])
+            if not dd_tag:
+                continue
+            dd_text = dd_tag.get_text().strip().replace('\n', ' ')
+
+            if "時価総額" in dt_text:
+                m_cap = re.search(r'([0-9,]+(?:\.[0-9]+)?(?:兆|億)?円)', dd_text)
+                data["market_cap"] = m_cap.group(1) if m_cap else dd_text
+            elif "PER(会社予想)" in dt_text or ("PER" in dt_text and "連" in dt_text):
+                m_per = re.search(r'([0-9,]+(?:\.[0-9]+)?)\s*倍', dd_text)
+                if m_per and data["per"] == "-":
+                    data["per"] = f"{m_per.group(1)}倍"
+            elif "PBR(実績)" in dt_text or "PBR" in dt_text:
+                m_pbr = re.search(r'([0-9,]+(?:\.[0-9]+)?)\s*倍', dd_text)
+                if m_pbr and data["pbr"] == "-":
+                    data["pbr"] = f"{m_pbr.group(1)}倍"
+            elif "配当利回り" in dt_text:
+                m_div = re.search(r'([0-9,]+(?:\.[0-9]+)?)\s*%', dd_text)
+                if m_div:
+                    data["dividend_yield"] = f"{m_div.group(1)}%"
+            elif "決算発表予定日" in dt_text or "決算発表日" in dt_text:
+                m_date = re.search(r'(\d{4}[/-]\d{1,2}[/-]\d{1,2}|\d{1,2}月\d{1,2}日)', dd_text)
+                if m_date:
+                    data["settlement_date"] = m_date.group(1)
+
+        # 貸借区分フォールバック
+        for badge in soup.find_all(class_=re.compile(r'Badge|Tag|Label')):
+            b_txt = badge.get_text().strip()
+            if b_txt in ["貸借", "制度信用", "信用"]:
+                data["margin_type"] = b_txt
+                break
+
+    except Exception as e:
+        print(f"ファンダ取得エラー ({ticker_code}): {e}")
+
+    return data
