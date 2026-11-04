@@ -198,10 +198,10 @@ def get_stock_prices(ticker_code):
         pass
     return prices
 
-@st.cache_data(ttl=21600)
+@st.cache_data(ttl=3600)
 def get_fundamentals_summary(ticker_code):
     """
-    Yahoo!ファイナンスから主要ファンダメンタルズ概要を抽出（6時間キャッシュ）
+    Yahoo!ファイナンスから主要ファンダメンタルズ概要を抽出
     市場、時価総額、業種、PER、PBR、配当利回り、決算予定日（未発表時は直近発表実績を自動表示）
     """
     clean_code = clean_ticker_code(ticker_code)
@@ -220,7 +220,7 @@ def get_fundamentals_summary(ticker_code):
     }
 
     fiscal_month = 3
-    today_str = datetime.date.today().strftime("%Y/%m/%d")
+    today_date = datetime.date.today()
     future_settle_date = None
     future_announce_month = None
 
@@ -246,14 +246,14 @@ def get_fundamentals_summary(ticker_code):
                 if m_gen:
                     data["market"] = m_gen.group(1)
 
-            # 定義リストや行単位で各項目を特定
-            for row in soup.find_all(['li', 'tr', 'div']):
-                dt = row.find(['dt', 'th', 'span'])
-                dd = row.find(['dd', 'td'])
-                if not dt or not dd:
+            # 参考指標テーブルのブロックに厳密に限定して走査
+            for row in soup.find_all(['li', 'tr']):
+                label_el = row.find(['dt', 'th', 'span'])
+                val_el = row.find(['dd', 'td'])
+                if not label_el or not val_el:
                     continue
-                label = dt.get_text().strip()
-                val = dd.get_text().strip()
+                label = label_el.get_text().strip()
+                val = val_el.get_text().strip()
 
                 if "時価総額" in label and data["market_cap"] == "-":
                     m_cap = re.search(r'([0-9,]+(?:\.[0-9]+)?)\s*(兆|億|百万円)', val)
@@ -279,22 +279,23 @@ def get_fundamentals_summary(ticker_code):
                     if m_pbr:
                         data["pbr"] = f"{m_pbr.group(1)}倍"
 
-                if ("配当利回り" in label or "利回り" in label) and data["dividend_yield"] == "-":
+                if ("利回り" in label or "配当" in label) and data["dividend_yield"] == "-":
                     m_div = re.search(r'([0-9,]+(?:\.[0-9]+)?)\s*[%％]', val)
                     if m_div:
                         data["dividend_yield"] = f"{m_div.group(1)}%"
 
-                # 決算発表予定日（明確にラベル付けされた値のみチェック）
-                if "決算発表" in label and future_settle_date is None:
+                # 決算発表予定日（「決算発表予定日」という明確な見出しセルのみ照合）
+                if "決算発表予定日" in label:
+                    # '---' や未定をスキップ
                     m_date = re.search(r'(\d{4})[/-](\d{1,2})[/-](0?[1-9]|[12][0-9]|3[01])\b', val)
                     if m_date:
-                        y = m_date.group(1)
+                        y = int(m_date.group(1))
                         m = int(m_date.group(2))
                         d = int(m_date.group(3))
-                        cand_date = f"{y}/{m:02d}/{d:02d}"
-                        # 本日以降の未来日付である場合のみ「次回予定」として採用
-                        if cand_date >= today_str:
-                            future_settle_date = cand_date
+                        d_obj = datetime.date(y, m, d)
+                        # 明らかに未来の日付（本日より後）の場合のみ「次回予定日」として採用
+                        if d_obj > today_date:
+                            future_settle_date = f"{y}/{m:02d}/{d:02d}"
                             future_announce_month = m
 
             if "制度信用" in page_text and "貸借" not in page_text:
@@ -322,39 +323,37 @@ def get_fundamentals_summary(ticker_code):
     except Exception as e:
         print(f"Yahooプロファイル取得エラー ({ticker_code}): {e}")
 
-    # 3. 決算日の確定
+    # 3. 決算日の確定（次回予定日がある場合は次回、未定の場合は直近発表実績を表示）
     if future_settle_date:
-        # A. 次回予定が公表されている場合（未来の日付）
         q_label = deduce_quarter(fiscal_month, future_announce_month) if future_announce_month else ""
         data["settlement_date"] = f"{future_settle_date}{q_label}"
     else:
-        # B. 次回予定が未定（直近決算を終えたばかり）の場合：直近実績日を取得
+        # 直近発表実績を業績タブ（/financial）から取得
         url_fin = f"https://finance.yahoo.co.jp/quote/{clean_code}.T/financial"
-        past_settle_date = None
-        past_announce_month = None
+        past_dates = []
         try:
             res_fin = requests.get(url_fin, headers=headers, timeout=5)
             if res_fin.status_code == 200:
                 fin_soup = BeautifulSoup(res_fin.text, 'html.parser')
-                # 発表日リストから最も直近の過去日付（本日以前）を抽出
-                for tag in fin_soup.find_all(['td', 'th', 'span', 'li', 'time']):
+                for tag in fin_soup.find_all(['td', 'th', 'time', 'span']):
                     t_str = tag.get_text().strip()
-                    m_past = re.search(r'(\d{4})[/-](\d{1,2})[/-](0?[1-9]|[12][0-9]|3[01])\b', t_str)
-                    if m_past:
-                        y = m_past.group(1)
-                        m = int(m_past.group(2))
-                        d = int(m_past.group(3))
-                        cand_past = f"{y}/{m:02d}/{d:02d}"
-                        if cand_past <= today_str:
-                            if past_settle_date is None or cand_past > past_settle_date:
-                                past_settle_date = cand_past
-                                past_announce_month = m
+                    m_p = re.search(r'(\d{4})[/-](\d{1,2})[/-](0?[1-9]|[12][0-9]|3[01])\b', t_str)
+                    if m_p:
+                        y = int(m_p.group(1))
+                        m = int(m_p.group(2))
+                        d = int(m_p.group(3))
+                        d_obj = datetime.date(y, m, d)
+                        # 本日以前の過去日付のみ候補に追加
+                        if d_obj <= today_date:
+                            past_dates.append((d_obj, y, m, d))
         except Exception as e:
             print(f"Yahoo業績実績取得エラー ({ticker_code}): {e}")
 
-        if past_settle_date:
-            q_label = deduce_quarter(fiscal_month, past_announce_month) if past_announce_month else ""
-            data["settlement_date"] = f"{past_settle_date}{q_label}"
+        if past_dates:
+            past_dates.sort(key=lambda x: x[0], reverse=True)
+            _, y, m, d = past_dates[0]
+            q_label = deduce_quarter(fiscal_month, m)
+            data["settlement_date"] = f"{y}/{m:02d}/{d:02d}{q_label}"
         else:
             data["settlement_date"] = "未定"
 
