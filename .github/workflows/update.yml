@@ -2,9 +2,9 @@ name: JPX Data Update
 
 on:
   schedule:
-    # 毎日 日本時間の17時30分 (UTCの8:30) に自動実行
-    - cron: '30 8 * * *'
-  workflow_dispatch: # GitHubの画面から手動で実行できるボタンを表示
+    # 混雑する00分/30分を避け、日本時間の17時37分 (UTCの8:37) に実行
+    - cron: '37 8 * * 1-5'
+  workflow_dispatch: # 手動実行用ボタン
 
 jobs:
   update-data:
