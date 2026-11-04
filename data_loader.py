@@ -130,7 +130,7 @@ def get_yahoo_realtime_and_pts(ticker_code):
                 pts_sec = pts_parent.find_all(class_=re.compile(r'PriceChangeLabel'))
                 for sec in pts_sec:
                     sec_text = sec.get_text().strip()
-                    m = re.search(r'([+-]?[0-9,]+(?:\.[0-9]+)?)\s*\(?([+-]?[0-9.]+[%％]?)\)?', sec_text)
+                    m = re.search(r'([+-]?[0-9,]+(?:\.[0-9]+)?)\s*\(?([+-]?[0-9.]+[\%％]?)\)?', sec_text)
                     if m:
                         result["pts_diff_val"] = m.group(1).strip()
                         pct_val = m.group(2).strip()
@@ -176,3 +176,41 @@ def get_stock_prices(ticker_code):
     except Exception:
         pass
     return prices
+
+@st.cache_data(ttl=21600)
+def get_fundamentals_summary(ticker_code):
+    """
+    Yahoo!ファイナンスから主要ファンダメンタルズ概要を抽出（6時間キャッシュ）
+    市場、時価総額、業種、PER、PBR、配当利回り、決算予定日
+    """
+    clean_code = clean_ticker_code(ticker_code)
+    data = {
+        "market": "-",
+        "margin_type": "貸借",
+        "market_cap": "-",
+        "industry": "-",
+        "per": "-",
+        "pbr": "-",
+        "dividend_yield": "-",
+        "settlement_date": "-"
+    }
+    url = f"https://finance.yahoo.co.jp/quote/{clean_code}.T"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    try:
+        res = requests.get(url, headers=headers, timeout=6)
+        if res.status_code != 200:
+            return data
+        soup = BeautifulSoup(res.text, 'html.parser')
+
+        # 1. 市場・業種
+        market_span = soup.find('span', class_=re.compile(r'StockHeader__market\b|QuoteHeader__market'))
+        if market_span:
+            data["market"] = market_span.get_text().strip()
+
+        industry_tag = soup.find('a', href=re.compile(r'/categories/'))
+        if industry_tag:
+            data["industry"] = industry_tag.get_text().strip()
+
+        # 2. テーブル（詳細情報ブロック）からの
