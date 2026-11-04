@@ -12,7 +12,7 @@ import streamlit as st
 DEFAULT_SPREADSHEET_ID = "1_YK99EVmXnTWHzE7oP9tO1jWYaxUiTinMyFQ-1n2M4g"
 DEFAULT_SHORT_SPREADSHEET_ID = "1Fdfmwq_6CBAG495JJD4EPgT7EOfyB9kZ_QAwU6pAXaU"
 
-# 東証33業種リスト（マッチング用）
+# 東証33業種一覧
 JPX_33_SECTORS = [
     "水産・農林業", "鉱業", "建設業", "食料品", "繊維製品", "パルプ・紙", "化学",
     "医薬品", "石油・石炭製品", "ゴム製品", "ガラス・土石製品", "鉄鋼", "非鉄金属",
@@ -188,7 +188,7 @@ def get_stock_prices(ticker_code):
 @st.cache_data(ttl=21600)
 def get_fundamentals_summary(ticker_code):
     """
-    Yahoo!ファイナンスから主要ファンダメンタルズ概要を抽出（6時間キャッシュ）
+    主要ファンダメンタルズ概要を抽出（6時間キャッシュ）
     市場、時価総額、業種、PER、PBR、配当利回り、決算予定日
     """
     clean_code = clean_ticker_code(ticker_code)
@@ -202,94 +202,103 @@ def get_fundamentals_summary(ticker_code):
         "dividend_yield": "-",
         "settlement_date": "-"
     }
-    url = f"https://finance.yahoo.co.jp/quote/{clean_code}.T"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
+
+    # ---------------------------------------------------------
+    # 1. Yahoo!ファイナンスからのデータ取得
+    # ---------------------------------------------------------
+    url_yahoo = f"https://finance.yahoo.co.jp/quote/{clean_code}.T"
     try:
-        res = requests.get(url, headers=headers, timeout=6)
-        if res.status_code != 200:
-            return data
-        
-        page_text = res.text
-        soup = BeautifulSoup(page_text, 'html.parser')
+        res = requests.get(url_yahoo, headers=headers, timeout=6)
+        if res.status_code == 200:
+            page_text = res.text
+            soup = BeautifulSoup(page_text, 'html.parser')
 
-        # 1. 市場判定
-        m_market = re.search(r'東証(プライム|スタンダード|グロース)', page_text)
-        if m_market:
-            data["market"] = m_market.group(1)
-        else:
-            m_gen = re.search(r'([A-Za-z0-9\u3000-\u9fff]+市場|名証|福証|札証)', page_text)
-            if m_gen:
-                data["market"] = m_gen.group(1)
+            # 市場判定
+            m_market = re.search(r'東証(プライム|スタンダード|グロース)', page_text)
+            if m_market:
+                data["market"] = m_market.group(1)
+            else:
+                m_gen = re.search(r'([A-Za-z0-9\u3000-\u9fff]+市場|名証|福証|札証)', page_text)
+                if m_gen:
+                    data["market"] = m_gen.group(1)
 
-        # 2. 業種（東証33業種名から直接照合 + パンくず/リンクフォールバック）
-        m_ind = re.search(r'業種[：:\s]*([^\s<"]+)', page_text)
-        if m_ind and m_ind.group(1) in JPX_33_SECTORS:
-            data["industry"] = m_ind.group(1)
-        else:
-            # ページ内に出現する33業種キーワードを優先度の高い位置から探索
-            for sec in JPX_33_SECTORS:
-                if sec in page_text:
-                    # 関連業種リスト等ではなく、ヘッダー/サマリー周辺に含まれているものを採用
-                    header_area = page_text[:15000]
-                    if sec in header_area:
-                        data["industry"] = sec
-                        break
-
-        if data["industry"] == "-":
-            cat_links = soup.find_all('a', href=re.compile(r'/categories/|/stocks/industry/'))
-            for cl in cat_links:
-                t = cl.get_text().strip()
-                if t and t not in ["株式", "国内株式", "業種別", "一覧"]:
-                    data["industry"] = t
-                    break
-
-        # 3. テキスト全体および定義リストからの抽出
-        dl_items = soup.find_all(['li', 'tr', 'div'])
-        for item in dl_items:
-            txt = item.get_text()
-            if "時価総額" in txt and data["market_cap"] == "-":
-                m_cap = re.search(r'([0-9,]+(?:\.[0-9]+)?)\s*(兆|億|百万円)', txt)
-                if m_cap:
-                    val_num = float(m_cap.group(1).replace(',', ''))
-                    unit = m_cap.group(2)
-                    if unit == "百万円":
-                        oku = val_num / 100.0
-                        if oku >= 10000:
-                            data["market_cap"] = f"{oku / 10000:.2f}兆円"
+            # 数値データの抽出
+            dl_items = soup.find_all(['li', 'tr', 'div'])
+            for item in dl_items:
+                txt = item.get_text()
+                if "時価総額" in txt and data["market_cap"] == "-":
+                    m_cap = re.search(r'([0-9,]+(?:\.[0-9]+)?)\s*(兆|億|百万円)', txt)
+                    if m_cap:
+                        val_num = float(m_cap.group(1).replace(',', ''))
+                        unit = m_cap.group(2)
+                        if unit == "百万円":
+                            oku = val_num / 100.0
+                            if oku >= 10000:
+                                data["market_cap"] = f"{oku / 10000:.2f}兆円"
+                            else:
+                                data["market_cap"] = f"{int(oku):,}億円"
                         else:
-                            data["market_cap"] = f"{int(oku):,}億円"
-                    else:
-                        data["market_cap"] = f"{m_cap.group(1)}{unit}円"
+                            data["market_cap"] = f"{m_cap.group(1)}{unit}円"
 
-            if ("PER" in txt or "ＰＥＲ" in txt) and data["per"] == "-":
-                m_per = re.search(r'(?:PER|ＰＥＲ)[^0-9]*([0-9,]+(?:\.[0-9]+)?)\s*倍', txt)
-                if m_per:
-                    data["per"] = f"{m_per.group(1)}倍"
+                if ("PER" in txt or "ＰＥＲ" in txt) and data["per"] == "-":
+                    m_per = re.search(r'(?:PER|ＰＥＲ)[^0-9]*([0-9,]+(?:\.[0-9]+)?)\s*倍', txt)
+                    if m_per:
+                        data["per"] = f"{m_per.group(1)}倍"
 
-            if ("PBR" in txt or "ＰＢＲ" in txt) and data["pbr"] == "-":
-                m_pbr = re.search(r'(?:PBR|ＰＢＲ)[^0-9]*([0-9,]+(?:\.[0-9]+)?)\s*倍', txt)
-                if m_pbr:
-                    data["pbr"] = f"{m_pbr.group(1)}倍"
+                if ("PBR" in txt or "ＰＢＲ" in txt) and data["pbr"] == "-":
+                    m_pbr = re.search(r'(?:PBR|ＰＢＲ)[^0-9]*([0-9,]+(?:\.[0-9]+)?)\s*倍', txt)
+                    if m_pbr:
+                        data["pbr"] = f"{m_pbr.group(1)}倍"
 
-            if ("利回り" in txt or "配当" in txt) and data["dividend_yield"] == "-":
-                m_div = re.search(r'(?:配当利回り|利回り)[^0-9%]*([0-9,]+(?:\.[0-9]+)?)\s*[%％]', txt)
-                if m_div:
-                    data["dividend_yield"] = f"{m_div.group(1)}%"
+                if ("利回り" in txt or "配当" in txt) and data["dividend_yield"] == "-":
+                    m_div = re.search(r'(?:配当利回り|利回り)[^0-9%]*([0-9,]+(?:\.[0-9]+)?)\s*[%％]', txt)
+                    if m_div:
+                        data["dividend_yield"] = f"{m_div.group(1)}%"
 
-            if ("決算発表" in txt or "決算" in txt) and data["settlement_date"] == "-":
-                m_date = re.search(r'決算[^0-9]*(\d{4}[/-]\d{1,2}[/-]\d{1,2}|\d{1,2}月\d{1,2}日)', txt)
-                if m_date:
-                    data["settlement_date"] = m_date.group(1)
+            # 貸借区分
+            if "制度信用" in page_text and "貸借" not in page_text:
+                data["margin_type"] = "制度"
+            elif "貸借" in page_text:
+                data["margin_type"] = "貸借"
+    except Exception as e:
+        print(f"Yahooファンダ取得エラー ({ticker_code}): {e}")
 
-        # 4. 貸借区分
-        if "制度信用" in page_text and "貸借" not in page_text:
-            data["margin_type"] = "制度"
-        elif "貸借" in page_text:
-            data["margin_type"] = "貸借"
+    # ---------------------------------------------------------
+    # 2. 株探（Kabutan）から業種と正確な決算予定日を取得
+    # ---------------------------------------------------------
+    url_kabutan = f"https://kabutan.jp/stock/?code={clean_code}"
+    try:
+        res_k = requests.get(url_kabutan, headers=headers, timeout=5)
+        if res_k.status_code == 200:
+            k_soup = BeautifulSoup(res_k.text, 'html.parser')
+            k_text = res_k.text
+
+            # 業種（株探の業界パンくず・セクターリンクから取得）
+            for sec in JPX_33_SECTORS:
+                # 株探のセクターリンクやヘッダー内の業種を照合
+                if f'>{sec}<' in k_text or f'業種：{sec}' in k_text or f'/{sec}/' in k_text:
+                    data["industry"] = sec
+                    break
+            
+            if data["industry"] == "-":
+                sector_tag = k_soup.find('a', href=re.compile(r'/themes/\?industry='))
+                if sector_tag and sector_tag.get_text().strip() in JPX_33_SECTORS:
+                    data["industry"] = sector_tag.get_text().strip()
+
+            # 決算発表予定日（日付け部分を厳格に正規表現マッチ：1〜31日）
+            # 例: "2026/11/06", "11/06", "11月6日"
+            match_k_date = re.search(r'決算発表予定日[^\d]*(\d{4})[/-](\d{1,2})[/-](0?[1-9]|[12][0-9]|3[01])(?!\d)', k_text)
+            if match_k_date:
+                data["settlement_date"] = f"{match_k_date.group(1)}/{int(match_k_date.group(2)):02d}/{int(match_k_date.group(3)):02d}"
+            else:
+                match_md = re.search(r'決算発表予定日[^\d]*(\d{1,2})[月/-](0?[1-9]|[12][0-9]|3[01])日?(?!\d)', k_text)
+                if match_md:
+                    data["settlement_date"] = f"{int(match_md.group(1)):02d}/{int(match_md.group(2)):02d}"
 
     except Exception as e:
-        print(f"ファンダ取得エラー ({ticker_code}): {e}")
+        print(f"株探補完取得エラー ({ticker_code}): {e}")
 
     return data
