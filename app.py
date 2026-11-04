@@ -13,7 +13,6 @@ from watchlist_manager import (
     render_watchlist_ui
 )
 
-# data_loaderからの安全な関数参照
 clean_ticker_code = getattr(data_loader, "clean_ticker_code", lambda x: str(x)[:4])
 load_data_from_sheet = getattr(data_loader, "load_data_from_sheet")
 get_company_name_from_yahoo_japan = getattr(data_loader, "get_company_name_from_yahoo_japan")
@@ -24,7 +23,8 @@ get_fundamentals_summary = getattr(
     "get_fundamentals_summary", 
     lambda x: {
         "market": "-", "margin_type": "貸借", "market_cap": "-", 
-        "industry": "-", "per": "-", "pbr": "-", "dividend_yield": "-", "settlement_date": "-"
+        "industry": "-", "per": "-", "pbr": "-", "dividend_yield": "-", 
+        "settlement_date": "-", "settlement_bg": "transparent", "settlement_color": "#333"
     }
 )
 
@@ -32,24 +32,18 @@ st.set_page_config(page_title="株価・信用残・機関空売りダッシュ�
 
 init_watchlist_state()
 
-# ----------------------------------------------------
 # 画面表示モードの管理（需給ビュー / 詳細ビュー）
-# ----------------------------------------------------
 if "active_view" not in st.session_state:
     st.session_state.active_view = "supply_demand"
 
-# ----------------------------------------------------
 # 1. 左側サイドバー（ウォッチリスト）
-# ----------------------------------------------------
 with st.sidebar:
     st.header("📋 ウォッチリスト")
     st.caption("クリックで即時分析 / ✕で削除")
     render_watchlist_ui()
     st.divider()
 
-# ----------------------------------------------------
 # 2. メイン画面入力
-# ----------------------------------------------------
 st.title("株価・信用残・機関空売りダッシュボード")
 
 if "current_ticker" not in st.session_state:
@@ -69,9 +63,7 @@ if ticker:
     fav_status = is_favorite(clean_target)
     btn_label = "★ 削除" if fav_status else "★ 追加"
 
-    # ====================================================
-    # A. 銘柄詳細ビュー（切り替え画面・中身は今後構築）
-    # ====================================================
+    # A. 銘柄詳細ビュー
     if st.session_state.active_view == "detail":
         col_back, col_d_title = st.columns([0.15, 0.85])
         with col_back:
@@ -83,9 +75,7 @@ if ticker:
 
         st.info("💡 詳細データ分析画面（日証金速報・信用倍率推移など）は現在設計・準備中です。")
 
-    # ====================================================
-    # B. 通常画面（需給・空売りメインビュー）
-    # ====================================================
+    # B. 通常画面（需給メインビュー）
     else:
         period_option = st.selectbox(
             "表示期間を選択：",
@@ -105,7 +95,7 @@ if ticker:
         quote_info = get_yahoo_realtime_and_pts(clean_target)
         fund_info = get_fundamentals_summary(clean_target)
 
-        # 銘柄ヘッダーとお気に入りボタン ＋ 詳細画面切り替えボタン
+        # ヘッダーとお気に入りボタン ＋ 詳細画面切り替えボタン
         col_title, col_fav, col_detail, col_empty = st.columns([0.45, 0.12, 0.18, 0.25])
         with col_title:
             st.subheader(f"{title_label} のデータ分析")
@@ -120,9 +110,11 @@ if ticker:
                 st.session_state.active_view = "detail"
                 st.rerun()
 
-        # ----------------------------------------------------
-        # ファンダメンタルズ概要カード
-        # ----------------------------------------------------
+        # ファンダメンタルズ概要カード（決算アラート色バッジ対応）
+        s_bg = fund_info.get("settlement_bg", "transparent")
+        s_col = fund_info.get("settlement_color", "#333333")
+        s_date = fund_info.get("settlement_date", "-")
+
         fund_html = f"""
         <div style="background-color: #f8f9fa; border: 1px solid #e1e4e8; border-radius: 6px; padding: 7px 12px; margin-bottom: 12px; font-size: 13px; color: #333; display: flex; flex-wrap: wrap; gap: 16px; align-items: center;">
             <div><span style="color: #666;">市場/貸借:</span> <b>{fund_info.get('market', '-')} / {fund_info.get('margin_type', '貸借')}</b></div>
@@ -131,14 +123,17 @@ if ticker:
             <div><span style="color: #666;">予想PER:</span> <b>{fund_info.get('per', '-')}</b></div>
             <div><span style="color: #666;">実績PBR:</span> <b>{fund_info.get('pbr', '-')}</b></div>
             <div><span style="color: #666;">配当利回り:</span> <b>{fund_info.get('dividend_yield', '-')}</b></div>
-            <div><span style="color: #666;">決算予定:</span> <b>{fund_info.get('settlement_date', '-')}</b></div>
+            <div>
+                <span style="color: #666;">決算予定:</span> 
+                <span style="background-color: {s_bg}; color: {s_col}; padding: 2px 6px; border-radius: 4px; font-weight: bold; display: inline-block;">
+                    {s_date}
+                </span>
+            </div>
         </div>
         """
         st.markdown(fund_html, unsafe_allow_html=True)
 
-        # ----------------------------------------------------
         # リアルタイム株価 / 夜間PTSカード
-        # ----------------------------------------------------
         tse_price = f"{quote_info['price']} 円" if quote_info['price'] else "-"
         if quote_info['change_val'] and quote_info['change_pct']:
             tse_delta = f"{quote_info['change_val']} ({quote_info['change_pct']})"
@@ -165,9 +160,7 @@ if ticker:
         with q_col2:
             st.metric(label="夜間PTS株価 / 東証終値比", value=pts_price, delta=pts_delta)
 
-        # ----------------------------------------------------
-        # 需給データモデルの構築
-        # ----------------------------------------------------
+        # 需給データモデル構築
         model = build_supply_demand_model(
             ticker=clean_target,
             company_name=company_name,
@@ -178,9 +171,7 @@ if ticker:
             clean_ticker_func=clean_ticker_code
         )
 
-        # ----------------------------------------------------
         # グラフ描画
-        # ----------------------------------------------------
         c_check, c_space = st.columns([0.4, 0.6])
         with c_check:
             show_price = st.checkbox("📈 株価推移（右軸）を表示", value=True)
@@ -192,9 +183,7 @@ if ticker:
             config={'scrollZoom': False, 'displayModeBar': False, 'doubleClick': False}
         )
 
-        # ----------------------------------------------------
         # 機関一覧とメインテーブル描画
-        # ----------------------------------------------------
         if model.institutions:
             inst_summary_html = render_institution_summary_html(model.institutions, model.title_label)
             components.html(inst_summary_html, height=min(180, 40 + len(model.institutions) * 28), scrolling=True)
