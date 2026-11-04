@@ -2,14 +2,7 @@ import streamlit as st
 import datetime
 import streamlit.components.v1 as components
 
-from data_loader import (
-    clean_ticker_code,
-    load_data_from_sheet,
-    get_company_name_from_yahoo_japan,
-    get_stock_prices,
-    get_yahoo_realtime_and_pts,
-    get_fundamentals_summary
-)
+import data_loader
 from analytics import build_supply_demand_model
 from chart_view import render_combined_chart
 from table_view import render_institution_summary_html, render_main_table_html
@@ -20,6 +13,21 @@ from watchlist_manager import (
     render_watchlist_ui
 )
 
+# data_loaderからの安全な関数参照
+clean_ticker_code = getattr(data_loader, "clean_ticker_code", lambda x: str(x)[:4])
+load_data_from_sheet = getattr(data_loader, "load_data_from_sheet")
+get_company_name_from_yahoo_japan = getattr(data_loader, "get_company_name_from_yahoo_japan")
+get_stock_prices = getattr(data_loader, "get_stock_prices")
+get_yahoo_realtime_and_pts = getattr(data_loader, "get_yahoo_realtime_and_pts")
+get_fundamentals_summary = getattr(
+    data_loader, 
+    "get_fundamentals_summary", 
+    lambda x: {
+        "market": "-", "margin_type": "貸借", "market_cap": "-", 
+        "industry": "-", "per": "-", "pbr": "-", "dividend_yield": "-", "settlement_date": "-"
+    }
+)
+
 st.set_page_config(page_title="株価・信用残・機関空売りダッシュボード", layout="wide")
 
 init_watchlist_state()
@@ -28,7 +36,7 @@ init_watchlist_state()
 # 画面表示モードの管理（需給ビュー / 詳細ビュー）
 # ----------------------------------------------------
 if "active_view" not in st.session_state:
-    st.session_state.active_view = "supply_demand"  # 'supply_demand' or 'detail'
+    st.session_state.active_view = "supply_demand"
 
 # ----------------------------------------------------
 # 1. 左側サイドバー（ウォッチリスト）
@@ -113,17 +121,17 @@ if ticker:
                 st.rerun()
 
         # ----------------------------------------------------
-        # ファンダメンタルズ概要カード（指定の赤線エリア）
+        # ファンダメンタルズ概要カード
         # ----------------------------------------------------
         fund_html = f"""
         <div style="background-color: #f8f9fa; border: 1px solid #e1e4e8; border-radius: 6px; padding: 7px 12px; margin-bottom: 12px; font-size: 13px; color: #333; display: flex; flex-wrap: wrap; gap: 16px; align-items: center;">
-            <div><span style="color: #666;">市場/貸借:</span> <b>{fund_info['market']} / {fund_info['margin_type']}</b></div>
-            <div><span style="color: #666;">業種:</span> <b>{fund_info['industry']}</b></div>
-            <div><span style="color: #666;">時価総額:</span> <b>{fund_info['market_cap']}</b></div>
-            <div><span style="color: #666;">予想PER:</span> <b>{fund_info['per']}</b></div>
-            <div><span style="color: #666;">実績PBR:</span> <b>{fund_info['pbr']}</b></div>
-            <div><span style="color: #666;">配当利回り:</span> <b>{fund_info['dividend_yield']}</b></div>
-            <div><span style="color: #666;">決算予定:</span> <b>{fund_info['settlement_date']}</b></div>
+            <div><span style="color: #666;">市場/貸借:</span> <b>{fund_info.get('market', '-')} / {fund_info.get('margin_type', '貸借')}</b></div>
+            <div><span style="color: #666;">業種:</span> <b>{fund_info.get('industry', '-')}</b></div>
+            <div><span style="color: #666;">時価総額:</span> <b>{fund_info.get('market_cap', '-')}</b></div>
+            <div><span style="color: #666;">予想PER:</span> <b>{fund_info.get('per', '-')}</b></div>
+            <div><span style="color: #666;">実績PBR:</span> <b>{fund_info.get('pbr', '-')}</b></div>
+            <div><span style="color: #666;">配当利回り:</span> <b>{fund_info.get('dividend_yield', '-')}</b></div>
+            <div><span style="color: #666;">決算予定:</span> <b>{fund_info.get('settlement_date', '-')}</b></div>
         </div>
         """
         st.markdown(fund_html, unsafe_allow_html=True)
