@@ -151,7 +151,7 @@ def get_yahoo_realtime_and_pts(ticker_code):
                 pts_sec = pts_parent.find_all(class_=re.compile(r'PriceChangeLabel'))
                 for sec in pts_sec:
                     sec_text = sec.get_text().strip()
-                    m = re.search(r'([+-]?[0-9,]+(?:\.[0-9]+)?)\s*\(?([+-]?[0-9.]+[\%％]?)\)?', sec_text)
+                    m = re.search(r'([+-]?[0-9,]+(?:\.[0-9]+)?)\s*\(?([+-]?[0-9.]+[%％]?)\)?', sec_text)
                     if m:
                         result["pts_diff_val"] = m.group(1).strip()
                         pct_val = m.group(2).strip()
@@ -269,4 +269,114 @@ def get_fundamentals_summary(ticker_code):
                             if oku >= 10000:
                                 data["market_cap"] = f"{oku / 10000:.2f}兆円"
                             else:
-                                data["market_cap"] = f"{int
+                                data["market_cap"] = f"{int(oku):,}億円"
+                        else:
+                            data["market_cap"] = f"{m_cap.group(1)}{unit}円"
+
+                if ("PER" in label or "ＰＥＲ" in label) and data["per"] == "-":
+                    m_per = re.search(r'([0-9,]+(?:\.[0-9]+)?)\s*倍', val)
+                    if m_per:
+                        data["per"] = f"{m_per.group(1)}倍"
+
+                if ("PBR" in label or "ＰＢＲ" in label) and data["pbr"] == "-":
+                    m_pbr = re.search(r'([0-9,]+(?:\.[0-9]+)?)\s*倍', val)
+                    if m_pbr:
+                        data["pbr"] = f"{m_pbr.group(1)}倍"
+
+                if ("利回り" in label or "配当" in label) and data["dividend_yield"] == "-":
+                    m_div = re.search(r'([0-9,]+(?:\.[0-9]+)?)\s*[%％]', val)
+                    if m_div:
+                        data["dividend_yield"] = f"{m_div.group(1)}%"
+
+            # 5. 次回決算予定日（キャプチャで確認した上部の pressReleaseScheduleLink をピンポイント取得）
+            sched_link = soup.find('a', class_=re.compile(r'pressReleaseScheduleLink', re.I))
+            if sched_link:
+                link_text = sched_link.get_text().strip()
+                m_date = re.search(r'(\d{4})[/-](\d{1,2})[/-](0?[1-9]|[12][0-9]|3[01])\b', link_text)
+                if m_date:
+                    y = int(m_date.group(1))
+                    m = int(m_date.group(2))
+                    d = int(m_date.group(3))
+                    future_d_obj = datetime.date(y, m, d)
+                    future_date_str = f"{y}/{m:02d}/{d:02d}"
+
+            # 貸借区分
+            if "制度信用" in page_text and "貸借" not in page_text:
+                data["margin_type"] = "制度"
+            elif "貸借" in page_text:
+                data["margin_type"] = "貸借"
+
+    except Exception as e:
+        print(f"Yahooファンダ取得エラー ({ticker_code}): {e}")
+
+    # ----------------------------------------------------
+    # 決算日と背景色の確定ルール
+    # ----------------------------------------------------
+    if future_date_str and future_d_obj:
+        # 【ルール1】：次回予定日が存在する場合
+        q_label = deduce_quarter(fiscal_month, future_d_obj.month)
+        data["settlement_date"] = f"{future_date_str}{q_label}"
+
+        days_left = (future_d_obj - today_date).days
+        if days_left <= 3:
+            # 3日以内：赤色背景
+            data["settlement_bg"] = "#ffebee"
+            data["settlement_color"] = "#c62828"
+        elif days_left <= 7:
+            # 7日以内：オレンジ色背景
+            data["settlement_bg"] = "#fff3e0"
+            data["settlement_color"] = "#ef6c00"
+        else:
+            # それ以上：通常背景
+            data["settlement_bg"] = "#f0f2f6"
+            data["settlement_color"] = "#333333"
+
+    else:
+        # 【ルール2】：次回予定が無い（直近発表終了）場合、決算タブ（/financials）の実績を取得
+        url_fin = f"https://finance.yahoo.co.jp/quote/{clean_code}.T/financials"
+        past_date_str = None
+        past_quarter_str = ""
+        try:
+            res_fin = requests.get(url_fin, headers=headers, timeout=5)
+            if res_fin.status_code == 200:
+                fin_soup = BeautifulSoup(res_fin.text, 'html.parser')
+
+                # <time> タグから発表日を直接抽出（例: 2026年10月8日）
+                time_tag = fin_soup.find('time')
+                if time_tag:
+                    dt_attr = time_tag.get('datetime', '')
+                    m_time = re.search(r'(\d{4})[-/](\d{1,2})[-/](\d{1,2})', dt_attr)
+                    if not m_time:
+                        m_time = re.search(r'(\d{4})年(\d{1,2})月(\d{1,2})日', time_tag.get_text())
+                    if m_time:
+                        y = int(m_time.group(1))
+                        m = int(m_time.group(2))
+                        d = int(m_time.group(3))
+                        past_date_str = f"{y}/{m:02d}/{d:02d}"
+
+                # 四半期の特定（まとめ文中の「第2四半期」「中間」など）
+                fin_text = res_fin.text
+                if "第1四半期" in fin_text:
+                    past_quarter_str = " (Q1)"
+                elif "第2四半期" in fin_text or "中間" in fin_text:
+                    past_quarter_str = " (Q2)"
+                elif "第3四半期" in fin_text:
+                    past_quarter_str = " (Q3)"
+                elif "本決算" in fin_text:
+                    past_quarter_str = " (本決算)"
+                elif past_date_str:
+                    past_quarter_str = deduce_quarter(fiscal_month, int(past_date_str.split('/')[1]))
+        except Exception as e:
+            print(f"Yahoo業績実績取得エラー ({ticker_code}): {e}")
+
+        if past_date_str:
+            data["settlement_date"] = f"{past_date_str}{past_quarter_str} (済)"
+            # 直近終了（済）：青色背景
+            data["settlement_bg"] = "#e3f2fd"
+            data["settlement_color"] = "#1565c0"
+        else:
+            data["settlement_date"] = "未定"
+            data["settlement_bg"] = "#f0f2f6"
+            data["settlement_color"] = "#666666"
+
+    return data
