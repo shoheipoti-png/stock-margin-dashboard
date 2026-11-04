@@ -188,7 +188,7 @@ def get_stock_prices(ticker_code):
 def get_fundamentals_summary(ticker_code):
     """
     Yahoo!ファイナンスから主要ファンダメンタルズ概要を抽出（6時間キャッシュ）
-    市場、時価総額、業種、PER、PBR、配当利回り、決算予定日（四半期情報付き）
+    市場、時価総額、業種、PER、PBR、配当利回り、決算予定日（正確な四半期情報付き）
     """
     clean_code = clean_ticker_code(ticker_code)
     data = {
@@ -205,7 +205,7 @@ def get_fundamentals_summary(ticker_code):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
-    # 1. トップページから各種指標と決算日（＋四半期）の取得
+    # 1. トップページから各種指標と決算日（日付直結の四半期判定）
     url_quote = f"https://finance.yahoo.co.jp/quote/{clean_code}.T"
     try:
         res = requests.get(url_quote, headers=headers, timeout=6)
@@ -255,9 +255,8 @@ def get_fundamentals_summary(ticker_code):
                     if m_div:
                         data["dividend_yield"] = f"{m_div.group(1)}%"
 
-                # 決算発表予定日＋四半期（例: 2026/11/06 (2Q)）
+                # 決算発表予定日（日付の直後から四半期を特定）
                 if ("決算" in txt or "決算発表" in txt) and data["settlement_date"] == "-":
-                    # 日付の抽出
                     m_date = re.search(r'(\d{4})[/-](\d{1,2})[/-](0?[1-9]|[12][0-9]|3[01])\b', txt)
                     if m_date:
                         y = m_date.group(1)
@@ -265,9 +264,10 @@ def get_fundamentals_summary(ticker_code):
                         d = int(m_date.group(3))
                         date_str = f"{y}/{m:02d}/{d:02d}"
 
-                        # 四半期（1Q〜4Q、第1四半期〜第4四半期、本決算など）の検出
+                        # 日付の後ろに続くテキスト（後続20文字）から四半期を判定
+                        post_text = txt[m_date.end():m_date.end() + 20]
                         quarter_str = ""
-                        m_q = re.search(r'(?:第?([1-4])四半期|([1-4])Q|本決算|中間)', txt)
+                        m_q = re.search(r'(?:第?\s*([1-4])\s*四半期|([1-4])\s*Q|本決算|中間)', post_text)
                         if m_q:
                             if m_q.group(1):
                                 quarter_str = f" (Q{m_q.group(1)})"
@@ -280,7 +280,6 @@ def get_fundamentals_summary(ticker_code):
 
                         data["settlement_date"] = f"{date_str}{quarter_str}"
 
-            # 貸借区分
             if "制度信用" in page_text and "貸借" not in page_text:
                 data["margin_type"] = "制度"
             elif "貸借" in page_text:
