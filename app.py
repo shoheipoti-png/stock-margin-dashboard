@@ -7,7 +7,8 @@ from data_loader import (
     load_data_from_sheet,
     get_company_name_from_yahoo_japan,
     get_stock_prices,
-    get_yahoo_realtime_and_pts
+    get_yahoo_realtime_and_pts,
+    get_fundamentals_summary
 )
 from analytics import build_supply_demand_model
 from chart_view import render_combined_chart
@@ -22,6 +23,12 @@ from watchlist_manager import (
 st.set_page_config(page_title="株価・信用残・機関空売りダッシュボード", layout="wide")
 
 init_watchlist_state()
+
+# ----------------------------------------------------
+# 画面表示モードの管理（需給ビュー / 詳細ビュー）
+# ----------------------------------------------------
+if "active_view" not in st.session_state:
+    st.session_state.active_view = "supply_demand"  # 'supply_demand' or 'detail'
 
 # ----------------------------------------------------
 # 1. 左側サイドバー（ウォッチリスト）
@@ -47,101 +54,142 @@ if ticker != st.session_state.current_ticker:
 
 if ticker:
     clean_target = clean_ticker_code(ticker)
-    
-    period_option = st.selectbox(
-        "表示期間を選択：",
-        ["直近1ヶ月", "直近3ヶ月", "直半年", "1年"],
-        index=0
-    )
-    days_map = {"直近1ヶ月": 30, "直近3ヶ月": 90, "直半年": 180, "1年": 365}
-    selected_days = days_map[period_option]
 
-    cutoff_date = datetime.date.today() - datetime.timedelta(days=selected_days)
-    cutoff_str = cutoff_date.strftime("%Y-%m-%d")
-
-    # ----------------------------------------------------
-    # 3. 生データ取得
-    # ----------------------------------------------------
-    df_margin = load_data_from_sheet("margin")
-    df_short = load_data_from_sheet("short")
+    # 共通データ取得
     company_name = get_company_name_from_yahoo_japan(clean_target)
-    stock_prices = get_stock_prices(clean_target)
-    quote_info = get_yahoo_realtime_and_pts(clean_target)
-
-    # 銘柄ヘッダーとお気に入りボタン
     title_label = f"{clean_target}（{company_name}）" if company_name else clean_target
     fav_status = is_favorite(clean_target)
     btn_label = "★ 削除" if fav_status else "★ 追加"
 
-    col_title, col_fav, col_empty = st.columns([0.45, 0.12, 0.43])
-    with col_title:
-        st.subheader(f"{title_label} のデータ分析")
-    with col_fav:
-        st.write("")
-        if st.button(btn_label, use_container_width=True):
-            toggle_favorite(clean_target, company_name)
-            st.rerun()
+    # ====================================================
+    # A. 銘柄詳細ビュー（切り替え画面・中身は今後構築）
+    # ====================================================
+    if st.session_state.active_view == "detail":
+        col_back, col_d_title = st.columns([0.15, 0.85])
+        with col_back:
+            if st.button("⬅ 需給画面へ戻る", use_container_width=True):
+                st.session_state.active_view = "supply_demand"
+                st.rerun()
+        with col_d_title:
+            st.subheader(f"📑 {title_label} の詳細データ分析")
 
-    # リアルタイム株価 / 夜間PTSカード
-    tse_price = f"{quote_info['price']} 円" if quote_info['price'] else "-"
-    if quote_info['change_val'] and quote_info['change_pct']:
-        tse_delta = f"{quote_info['change_val']} ({quote_info['change_pct']})"
-    elif quote_info['change_val']:
-        tse_delta = quote_info['change_val']
-    elif quote_info['change_pct']:
-        tse_delta = quote_info['change_pct']
+        st.info("💡 詳細データ分析画面（日証金速報・信用倍率推移など）は現在設計・準備中です。")
+
+    # ====================================================
+    # B. 通常画面（需給・空売りメインビュー）
+    # ====================================================
     else:
-        tse_delta = None
+        period_option = st.selectbox(
+            "表示期間を選択：",
+            ["直近1ヶ月", "直近3ヶ月", "直半年", "1年"],
+            index=0
+        )
+        days_map = {"直近1ヶ月": 30, "直近3ヶ月": 90, "直半年": 180, "1年": 365}
+        selected_days = days_map[period_option]
 
-    pts_price = f"{quote_info['pts_price']} 円" if quote_info['pts_price'] else "-"
-    if quote_info['pts_diff_val'] and quote_info['pts_diff_pct']:
-        pts_delta = f"{quote_info['pts_diff_val']} ({quote_info['pts_diff_pct']})"
-    elif quote_info['pts_diff_val']:
-        pts_delta = quote_info['pts_diff_val']
-    elif quote_info['pts_diff_pct']:
-        pts_delta = quote_info['pts_diff_pct']
-    else:
-        pts_delta = None
+        cutoff_date = datetime.date.today() - datetime.timedelta(days=selected_days)
+        cutoff_str = cutoff_date.strftime("%Y-%m-%d")
 
-    q_col1, q_col2, q_empty = st.columns([0.30, 0.30, 0.40])
-    with q_col1:
-        st.metric(label="リアルタイム株価 / 前日比・騰落率", value=tse_price, delta=tse_delta)
-    with q_col2:
-        st.metric(label="夜間PTS株価 / 東証終値比", value=pts_price, delta=pts_delta)
+        # 生データ取得
+        df_margin = load_data_from_sheet("margin")
+        df_short = load_data_from_sheet("short")
+        stock_prices = get_stock_prices(clean_target)
+        quote_info = get_yahoo_realtime_and_pts(clean_target)
+        fund_info = get_fundamentals_summary(clean_target)
 
-    # ----------------------------------------------------
-    # 4. 需給データモデルの構築（集計ロジックを1行で集約）
-    # ----------------------------------------------------
-    model = build_supply_demand_model(
-        ticker=clean_target,
-        company_name=company_name,
-        df_margin=df_margin,
-        df_short=df_short,
-        stock_prices=stock_prices,
-        cutoff_str=cutoff_str,
-        clean_ticker_func=clean_ticker_code
-    )
+        # 銘柄ヘッダーとお気に入りボタン ＋ 詳細画面切り替えボタン
+        col_title, col_fav, col_detail, col_empty = st.columns([0.45, 0.12, 0.18, 0.25])
+        with col_title:
+            st.subheader(f"{title_label} のデータ分析")
+        with col_fav:
+            st.write("")
+            if st.button(btn_label, use_container_width=True):
+                toggle_favorite(clean_target, company_name)
+                st.rerun()
+        with col_detail:
+            st.write("")
+            if st.button("🔍 詳細データ ➔", use_container_width=True):
+                st.session_state.active_view = "detail"
+                st.rerun()
 
-    # ----------------------------------------------------
-    # 5. グラフ描画
-    # ----------------------------------------------------
-    c_check, c_space = st.columns([0.4, 0.6])
-    with c_check:
-        show_price = st.checkbox("📈 株価推移（右軸）を表示", value=True)
+        # ----------------------------------------------------
+        # ファンダメンタルズ概要カード（指定の赤線エリア）
+        # ----------------------------------------------------
+        fund_html = f"""
+        <div style="background-color: #f8f9fa; border: 1px solid #e1e4e8; border-radius: 6px; padding: 7px 12px; margin-bottom: 12px; font-size: 13px; color: #333; display: flex; flex-wrap: wrap; gap: 16px; align-items: center;">
+            <div><span style="color: #666;">市場/貸借:</span> <b>{fund_info['market']} / {fund_info['margin_type']}</b></div>
+            <div><span style="color: #666;">業種:</span> <b>{fund_info['industry']}</b></div>
+            <div><span style="color: #666;">時価総額:</span> <b>{fund_info['market_cap']}</b></div>
+            <div><span style="color: #666;">予想PER:</span> <b>{fund_info['per']}</b></div>
+            <div><span style="color: #666;">実績PBR:</span> <b>{fund_info['pbr']}</b></div>
+            <div><span style="color: #666;">配当利回り:</span> <b>{fund_info['dividend_yield']}</b></div>
+            <div><span style="color: #666;">決算予定:</span> <b>{fund_info['settlement_date']}</b></div>
+        </div>
+        """
+        st.markdown(fund_html, unsafe_allow_html=True)
 
-    fig = render_combined_chart(model=model, show_price_line=show_price)
-    st.plotly_chart(
-        fig, 
-        use_container_width=True, 
-        config={'scrollZoom': False, 'displayModeBar': False, 'doubleClick': False}
-    )
+        # ----------------------------------------------------
+        # リアルタイム株価 / 夜間PTSカード
+        # ----------------------------------------------------
+        tse_price = f"{quote_info['price']} 円" if quote_info['price'] else "-"
+        if quote_info['change_val'] and quote_info['change_pct']:
+            tse_delta = f"{quote_info['change_val']} ({quote_info['change_pct']})"
+        elif quote_info['change_val']:
+            tse_delta = quote_info['change_val']
+        elif quote_info['change_pct']:
+            tse_delta = quote_info['change_pct']
+        else:
+            tse_delta = None
 
-    # ----------------------------------------------------
-    # 6. 機関一覧とメインテーブル描画
-    # ----------------------------------------------------
-    if model.institutions:
-        inst_summary_html = render_institution_summary_html(model.institutions, model.title_label)
-        components.html(inst_summary_html, height=min(180, 40 + len(model.institutions) * 28), scrolling=True)
+        pts_price = f"{quote_info['pts_price']} 円" if quote_info['pts_price'] else "-"
+        if quote_info['pts_diff_val'] and quote_info['pts_diff_pct']:
+            pts_delta = f"{quote_info['pts_diff_val']} ({quote_info['pts_diff_pct']})"
+        elif quote_info['pts_diff_val']:
+            pts_delta = quote_info['pts_diff_val']
+        elif quote_info['pts_diff_pct']:
+            pts_delta = quote_info['pts_diff_pct']
+        else:
+            pts_delta = None
 
-    html_table = render_main_table_html(model=model)
-    components.html(html_table, height=750, scrolling=True)
+        q_col1, q_col2, q_empty = st.columns([0.30, 0.30, 0.40])
+        with q_col1:
+            st.metric(label="リアルタイム株価 / 前日比・騰落率", value=tse_price, delta=tse_delta)
+        with q_col2:
+            st.metric(label="夜間PTS株価 / 東証終値比", value=pts_price, delta=pts_delta)
+
+        # ----------------------------------------------------
+        # 需給データモデルの構築
+        # ----------------------------------------------------
+        model = build_supply_demand_model(
+            ticker=clean_target,
+            company_name=company_name,
+            df_margin=df_margin,
+            df_short=df_short,
+            stock_prices=stock_prices,
+            cutoff_str=cutoff_str,
+            clean_ticker_func=clean_ticker_code
+        )
+
+        # ----------------------------------------------------
+        # グラフ描画
+        # ----------------------------------------------------
+        c_check, c_space = st.columns([0.4, 0.6])
+        with c_check:
+            show_price = st.checkbox("📈 株価推移（右軸）を表示", value=True)
+
+        fig = render_combined_chart(model=model, show_price_line=show_price)
+        st.plotly_chart(
+            fig, 
+            use_container_width=True, 
+            config={'scrollZoom': False, 'displayModeBar': False, 'doubleClick': False}
+        )
+
+        # ----------------------------------------------------
+        # 機関一覧とメインテーブル描画
+        # ----------------------------------------------------
+        if model.institutions:
+            inst_summary_html = render_institution_summary_html(model.institutions, model.title_label)
+            components.html(inst_summary_html, height=min(180, 40 + len(model.institutions) * 28), scrolling=True)
+
+        html_table = render_main_table_html(model=model)
+        components.html(html_table, height=750, scrolling=True)
