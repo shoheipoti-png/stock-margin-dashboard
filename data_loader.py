@@ -12,7 +12,6 @@ import streamlit as st
 DEFAULT_SPREADSHEET_ID = "1_YK99EVmXnTWHzE7oP9tO1jWYaxUiTinMyFQ-1n2M4g"
 DEFAULT_SHORT_SPREADSHEET_ID = "1Fdfmwq_6CBAG495JJD4EPgT7EOfyB9kZ_QAwU6pAXaU"
 
-# 東証33業種一覧
 JPX_33_SECTORS = [
     "水産・農林業", "鉱業", "建設業", "食料品", "繊維製品", "パルプ・紙", "化学",
     "医薬品", "石油・石炭製品", "ゴム製品", "ガラス・土石製品", "鉄鋼", "非鉄金属",
@@ -188,8 +187,8 @@ def get_stock_prices(ticker_code):
 @st.cache_data(ttl=21600)
 def get_fundamentals_summary(ticker_code):
     """
-    主要ファンダメンタルズ概要を抽出（6時間キャッシュ）
-    市場、時価総額、業種、PER、PBR、配当利回り、決算予定日
+    Yahoo!ファイナンスから主要ファンダメンタルズ概要を抽出（6時間キャッシュ）
+    市場、時価総額、業種、PER、PBR、配当利回り、決算予定日（四半期含む）
     """
     clean_code = clean_ticker_code(ticker_code)
     data = {
@@ -206,12 +205,10 @@ def get_fundamentals_summary(ticker_code):
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
-    # ---------------------------------------------------------
-    # 1. Yahoo!ファイナンスからのデータ取得
-    # ---------------------------------------------------------
-    url_yahoo = f"https://finance.yahoo.co.jp/quote/{clean_code}.T"
+    # 1. トップページから基本データ・決算予定を取得
+    url_quote = f"https://finance.yahoo.co.jp/quote/{clean_code}.T"
     try:
-        res = requests.get(url_yahoo, headers=headers, timeout=6)
+        res = requests.get(url_quote, headers=headers, timeout=6)
         if res.status_code == 200:
             page_text = res.text
             soup = BeautifulSoup(page_text, 'html.parser')
@@ -225,10 +222,12 @@ def get_fundamentals_summary(ticker_code):
                 if m_gen:
                     data["market"] = m_gen.group(1)
 
-            # 数値データの抽出
+            # 各種指標の抽出
             dl_items = soup.find_all(['li', 'tr', 'div'])
             for item in dl_items:
-                txt = item.get_text()
+                # タグ間スペースを空けてテキスト化（数字連結防止）
+                txt = item.get_text(separator=" ").strip()
+
                 if "時価総額" in txt and data["market_cap"] == "-":
                     m_cap = re.search(r'([0-9,]+(?:\.[0-9]+)?)\s*(兆|億|百万円)', txt)
                     if m_cap:
@@ -258,6 +257,20 @@ def get_fundamentals_summary(ticker_code):
                     if m_div:
                         data["dividend_yield"] = f"{m_div.group(1)}%"
 
+                # 決算発表予定日＋四半期（例: 2026/11/06 (2Q)）
+                if ("決算" in txt or "決算発表" in txt) and data["settlement_date"] == "-":
+                    m_settle = re.search(
+                        r'決算[^\d]*(\d{4})[/-](\d{1,2})[/-](0?[1-9]|[12][0-9]|3[01])\b(?:\s*([1-4]Q|第[1-4]四半期|本決算))?',
+                        txt
+                    )
+                    if m_settle:
+                        y = m_settle.group(1)
+                        m = int(m_settle.group(2))
+                        d = int(m_settle.group(3))
+                        q = m_settle.group(4)
+                        q_str = f" ({q})" if q else ""
+                        data["settlement_date"] = f"{y}/{m:02d}/{d:02d}{q_str}"
+
             # 貸借区分
             if "制度信用" in page_text and "貸借" not in page_text:
                 data["margin_type"] = "制度"
@@ -266,39 +279,19 @@ def get_fundamentals_summary(ticker_code):
     except Exception as e:
         print(f"Yahooファンダ取得エラー ({ticker_code}): {e}")
 
-    # ---------------------------------------------------------
-    # 2. 株探（Kabutan）から業種と正確な決算予定日を取得
-    # ---------------------------------------------------------
-    url_kabutan = f"https://kabutan.jp/stock/?code={clean_code}"
+    # 2. 企業プロファイルページから「業種」を確実に取得
+    url_profile = f"https://finance.yahoo.co.jp/quote/{clean_code}.T/profile"
     try:
-        res_k = requests.get(url_kabutan, headers=headers, timeout=5)
-        if res_k.status_code == 200:
-            k_soup = BeautifulSoup(res_k.text, 'html.parser')
-            k_text = res_k.text
-
-            # 業種（株探の業界パンくず・セクターリンクから取得）
-            for sec in JPX_33_SECTORS:
-                # 株探のセクターリンクやヘッダー内の業種を照合
-                if f'>{sec}<' in k_text or f'業種：{sec}' in k_text or f'/{sec}/' in k_text:
-                    data["industry"] = sec
+        res_prof = requests.get(url_profile, headers=headers, timeout=5)
+        if res_prof.status_code == 200:
+            prof_soup = BeautifulSoup(res_prof.text, 'html.parser')
+            # 業種タグまたはリンクの探索
+            for a_tag in prof_soup.find_all(['a', 'dd', 'td', 'span']):
+                txt = a_tag.get_text().strip()
+                if txt in JPX_33_SECTORS:
+                    data["industry"] = txt
                     break
-            
-            if data["industry"] == "-":
-                sector_tag = k_soup.find('a', href=re.compile(r'/themes/\?industry='))
-                if sector_tag and sector_tag.get_text().strip() in JPX_33_SECTORS:
-                    data["industry"] = sector_tag.get_text().strip()
-
-            # 決算発表予定日（日付け部分を厳格に正規表現マッチ：1〜31日）
-            # 例: "2026/11/06", "11/06", "11月6日"
-            match_k_date = re.search(r'決算発表予定日[^\d]*(\d{4})[/-](\d{1,2})[/-](0?[1-9]|[12][0-9]|3[01])(?!\d)', k_text)
-            if match_k_date:
-                data["settlement_date"] = f"{match_k_date.group(1)}/{int(match_k_date.group(2)):02d}/{int(match_k_date.group(3)):02d}"
-            else:
-                match_md = re.search(r'決算発表予定日[^\d]*(\d{1,2})[月/-](0?[1-9]|[12][0-9]|3[01])日?(?!\d)', k_text)
-                if match_md:
-                    data["settlement_date"] = f"{int(match_md.group(1)):02d}/{int(match_md.group(2)):02d}"
-
     except Exception as e:
-        print(f"株探補完取得エラー ({ticker_code}): {e}")
+        print(f"Yahooプロファイル取得エラー ({ticker_code}): {e}")
 
     return data
