@@ -198,11 +198,11 @@ def get_stock_prices(ticker_code):
         pass
     return prices
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=1800)
 def get_fundamentals_summary(ticker_code):
     """
     Yahoo!ファイナンスから主要ファンダメンタルズ概要を抽出
-    市場、時価総額、業種、PER、PBR、配当利回り、決算予定日（未発表時は直近発表実績を自動表示）
+    市場、時価総額、業種、PER、PBR、配当利回り、決算予定日（ルールに応じた背景色情報付き）
     """
     clean_code = clean_ticker_code(ticker_code)
     data = {
@@ -213,7 +213,9 @@ def get_fundamentals_summary(ticker_code):
         "per": "-",
         "pbr": "-",
         "dividend_yield": "-",
-        "settlement_date": "-"
+        "settlement_date": "-",
+        "settlement_bg": "transparent",
+        "settlement_color": "#333333"
     }
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -223,8 +225,8 @@ def get_fundamentals_summary(ticker_code):
     today_date = datetime.date.today()
     future_settle_date = None
     future_announce_month = None
+    future_date_obj = None
 
-    # 1. トップページから各種指標と「次回決算予定日」を取得
     url_quote = f"https://finance.yahoo.co.jp/quote/{clean_code}.T"
     try:
         res = requests.get(url_quote, headers=headers, timeout=6)
@@ -232,7 +234,7 @@ def get_fundamentals_summary(ticker_code):
             page_text = res.text
             soup = BeautifulSoup(page_text, 'html.parser')
 
-            # 決算期（月）の判定
+            # 決算月判定
             m_fisc = re.search(r'(?:決算期|決算月|事業年度)[^0-9]*(\d{1,2})月', page_text)
             if m_fisc:
                 fiscal_month = int(m_fisc.group(1))
@@ -246,14 +248,13 @@ def get_fundamentals_summary(ticker_code):
                 if m_gen:
                     data["market"] = m_gen.group(1)
 
-            # 参考指標テーブルのブロックに厳密に限定して走査
-            for row in soup.find_all(['li', 'tr']):
-                label_el = row.find(['dt', 'th', 'span'])
-                val_el = row.find(['dd', 'td'])
-                if not label_el or not val_el:
+            # dl, tr, li すべての定義ペアを漏れなく走査
+            for dt in soup.find_all(['dt', 'th']):
+                dd = dt.find_next_sibling(['dd', 'td'])
+                if not dd:
                     continue
-                label = label_el.get_text().strip()
-                val = val_el.get_text().strip()
+                label = dt.get_text().strip()
+                val = dd.get_text().strip()
 
                 if "時価総額" in label and data["market_cap"] == "-":
                     m_cap = re.search(r'([0-9,]+(?:\.[0-9]+)?)\s*(兆|億|百万円)', val)
@@ -284,19 +285,19 @@ def get_fundamentals_summary(ticker_code):
                     if m_div:
                         data["dividend_yield"] = f"{m_div.group(1)}%"
 
-                # 決算発表予定日（「決算発表予定日」という明確な見出しセルのみ照合）
-                if "決算発表予定日" in label:
-                    # '---' や未定をスキップ
+                # 決算発表予定日の取得
+                if "決算発表" in label and future_settle_date is None:
                     m_date = re.search(r'(\d{4})[/-](\d{1,2})[/-](0?[1-9]|[12][0-9]|3[01])\b', val)
                     if m_date:
                         y = int(m_date.group(1))
                         m = int(m_date.group(2))
                         d = int(m_date.group(3))
                         d_obj = datetime.date(y, m, d)
-                        # 明らかに未来の日付（本日より後）の場合のみ「次回予定日」として採用
-                        if d_obj > today_date:
+                        # 本日以降の未来日付を「次回予定」として採用
+                        if d_obj >= today_date:
                             future_settle_date = f"{y}/{m:02d}/{d:02d}"
                             future_announce_month = m
+                            future_date_obj = d_obj
 
             if "制度信用" in page_text and "貸借" not in page_text:
                 data["margin_type"] = "制度"
@@ -305,7 +306,7 @@ def get_fundamentals_summary(ticker_code):
     except Exception as e:
         print(f"Yahooファンダ取得エラー ({ticker_code}): {e}")
 
-    # 2. プロファイルページから「業種」と「本決算月」を取得
+    # プロファイルページから「業種」と「本決算月」を取得
     url_profile = f"https://finance.yahoo.co.jp/quote/{clean_code}.T/profile"
     try:
         res_prof = requests.get(url_profile, headers=headers, timeout=5)
@@ -323,19 +324,33 @@ def get_fundamentals_summary(ticker_code):
     except Exception as e:
         print(f"Yahooプロファイル取得エラー ({ticker_code}): {e}")
 
-    # 3. 決算日の確定（次回予定日がある場合は次回、未定の場合は直近発表実績を表示）
-    if future_settle_date:
-        q_label = deduce_quarter(fiscal_month, future_announce_month) if future_announce_month else ""
+    # 決算日および背景色の決定
+    if future_settle_date and future_date_obj:
+        # ルール1：次回予定日が取得できた場合
+        q_label = deduce_quarter(fiscal_month, future_announce_month)
         data["settlement_date"] = f"{future_settle_date}{q_label}"
+        days_left = (future_date_obj - today_date).days
+        if days_left <= 3:
+            # 3日以内：赤色
+            data["settlement_bg"] = "#ffebee"
+            data["settlement_color"] = "#c62828"
+        elif days_left <= 7:
+            # 7日以内：オレンジ色
+            data["settlement_bg"] = "#fff3e0"
+            data["settlement_color"] = "#ef6c00"
+        else:
+            data["settlement_bg"] = "#f0f2f6"
+            data["settlement_color"] = "#333333"
+
     else:
-        # 直近発表実績を業績タブ（/financial）から取得
+        # ルール2：次回未定で直近発表が終了している場合（業績タブから実績日を取得）
         url_fin = f"https://finance.yahoo.co.jp/quote/{clean_code}.T/financial"
         past_dates = []
         try:
             res_fin = requests.get(url_fin, headers=headers, timeout=5)
             if res_fin.status_code == 200:
                 fin_soup = BeautifulSoup(res_fin.text, 'html.parser')
-                for tag in fin_soup.find_all(['td', 'th', 'time', 'span']):
+                for tag in fin_soup.find_all(['td', 'th', 'time', 'span', 'li']):
                     t_str = tag.get_text().strip()
                     m_p = re.search(r'(\d{4})[/-](\d{1,2})[/-](0?[1-9]|[12][0-9]|3[01])\b', t_str)
                     if m_p:
@@ -343,7 +358,6 @@ def get_fundamentals_summary(ticker_code):
                         m = int(m_p.group(2))
                         d = int(m_p.group(3))
                         d_obj = datetime.date(y, m, d)
-                        # 本日以前の過去日付のみ候補に追加
                         if d_obj <= today_date:
                             past_dates.append((d_obj, y, m, d))
         except Exception as e:
@@ -353,8 +367,13 @@ def get_fundamentals_summary(ticker_code):
             past_dates.sort(key=lambda x: x[0], reverse=True)
             _, y, m, d = past_dates[0]
             q_label = deduce_quarter(fiscal_month, m)
-            data["settlement_date"] = f"{y}/{m:02d}/{d:02d}{q_label}"
+            data["settlement_date"] = f"{y}/{m:02d}/{d:02d}{q_label} (済)"
+            # 直近終了済み：青色
+            data["settlement_bg"] = "#e3f2fd"
+            data["settlement_color"] = "#1565c0"
         else:
             data["settlement_date"] = "未定"
+            data["settlement_bg"] = "#f0f2f6"
+            data["settlement_color"] = "#666666"
 
     return data
