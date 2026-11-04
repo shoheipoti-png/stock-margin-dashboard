@@ -202,51 +202,71 @@ def get_fundamentals_summary(ticker_code):
         res = requests.get(url, headers=headers, timeout=6)
         if res.status_code != 200:
             return data
-        soup = BeautifulSoup(res.text, 'html.parser')
+        
+        page_text = res.text
+        soup = BeautifulSoup(page_text, 'html.parser')
 
-        # 1. 市場・業種
-        market_span = soup.find('span', class_=re.compile(r'StockHeader__market\b|QuoteHeader__market'))
-        if market_span:
-            data["market"] = market_span.get_text().strip()
+        # 1. 市場判定（東証プライム、スタンダード、グロース）
+        m_market = re.search(r'東証(プライム|スタンダード|グロース)', page_text)
+        if m_market:
+            data["market"] = m_market.group(1)
+        else:
+            m_gen = re.search(r'([A-Za-z0-9\u3000-\u9fff]+市場|名証|福証|札証)', page_text)
+            if m_gen:
+                data["market"] = m_gen.group(1)
 
-        industry_tag = soup.find('a', href=re.compile(r'/categories/'))
-        if industry_tag:
-            data["industry"] = industry_tag.get_text().strip()
+        # 2. 業種
+        cat_links = soup.find_all('a', href=re.compile(r'/categories/|/stocks/industry/'))
+        for cl in cat_links:
+            t = cl.get_text().strip()
+            if t and t not in ["株式", "国内株式", "業種別"]:
+                data["industry"] = t
+                break
 
-        # 2. テーブル（詳細情報ブロック）からの抽出
-        for dt_tag in soup.find_all(['dt', 'th']):
-            dt_text = dt_tag.get_text().strip()
-            dd_tag = dt_tag.find_next_sibling(['dd', 'td'])
-            if not dd_tag:
-                continue
-            dd_text = dd_tag.get_text().strip().replace('\n', ' ')
+        # 3. テキスト全体および定義リスト（dl/dt/dd, th/td）を精査
+        dl_items = soup.find_all(['li', 'tr', 'div'])
+        for item in dl_items:
+            txt = item.get_text()
+            if "時価総額" in txt and data["market_cap"] == "-":
+                m_cap = re.search(r'([0-9,]+(?:\.[0-9]+)?)\s*(兆|億|百万円)', txt)
+                if m_cap:
+                    val_num = float(m_cap.group(1).replace(',', ''))
+                    unit = m_cap.group(2)
+                    if unit == "百万円":
+                        # 百万円を「〜億円」「〜兆〜億円」へ見やすく整形
+                        oku = val_num / 100.0
+                        if oku >= 10000:
+                            data["market_cap"] = f"{oku / 10000:.2f}兆円"
+                        else:
+                            data["market_cap"] = f"{int(oku):,}億円"
+                    else:
+                        data["market_cap"] = f"{m_cap.group(1)}{unit}円"
 
-            if "時価総額" in dt_text:
-                m_cap = re.search(r'([0-9,]+(?:\.[0-9]+)?(?:兆|億)?円)', dd_text)
-                data["market_cap"] = m_cap.group(1) if m_cap else dd_text
-            elif "PER(会社予想)" in dt_text or ("PER" in dt_text and "連" in dt_text):
-                m_per = re.search(r'([0-9,]+(?:\.[0-9]+)?)\s*倍', dd_text)
-                if m_per and data["per"] == "-":
+            if ("PER" in txt or "ＰＥＲ" in txt) and data["per"] == "-":
+                m_per = re.search(r'(?:PER|ＰＥＲ)[^0-9]*([0-9,]+(?:\.[0-9]+)?)\s*倍', txt)
+                if m_per:
                     data["per"] = f"{m_per.group(1)}倍"
-            elif "PBR(実績)" in dt_text or "PBR" in dt_text:
-                m_pbr = re.search(r'([0-9,]+(?:\.[0-9]+)?)\s*倍', dd_text)
-                if m_pbr and data["pbr"] == "-":
+
+            if ("PBR" in txt or "ＰＢＲ" in txt) and data["pbr"] == "-":
+                m_pbr = re.search(r'(?:PBR|ＰＢＲ)[^0-9]*([0-9,]+(?:\.[0-9]+)?)\s*倍', txt)
+                if m_pbr:
                     data["pbr"] = f"{m_pbr.group(1)}倍"
-            elif "配当利回り" in dt_text:
-                m_div = re.search(r'([0-9,]+(?:\.[0-9]+)?)\s*%', dd_text)
+
+            if ("利回り" in txt or "配当" in txt) and data["dividend_yield"] == "-":
+                m_div = re.search(r'(?:配当利回り|利回り)[^0-9%]*([0-9,]+(?:\.[0-9]+)?)\s*[%％]', txt)
                 if m_div:
                     data["dividend_yield"] = f"{m_div.group(1)}%"
-            elif "決算発表予定日" in dt_text or "決算発表日" in dt_text:
-                m_date = re.search(r'(\d{4}[/-]\d{1,2}[/-]\d{1,2}|\d{1,2}月\d{1,2}日)', dd_text)
+
+            if ("決算発表" in txt or "決算" in txt) and data["settlement_date"] == "-":
+                m_date = re.search(r'決算[^0-9]*(\d{4}[/-]\d{1,2}[/-]\d{1,2}|\d{1,2}月\d{1,2}日)', txt)
                 if m_date:
                     data["settlement_date"] = m_date.group(1)
 
-        # 貸借区分フォールバック
-        for badge in soup.find_all(class_=re.compile(r'Badge|Tag|Label')):
-            b_txt = badge.get_text().strip()
-            if b_txt in ["貸借", "制度信用", "信用"]:
-                data["margin_type"] = b_txt
-                break
+        # 4. 貸借区分
+        if "制度信用" in page_text and "貸借" not in page_text:
+            data["margin_type"] = "制度"
+        elif "貸借" in page_text:
+            data["margin_type"] = "貸借"
 
     except Exception as e:
         print(f"ファンダ取得エラー ({ticker_code}): {e}")
