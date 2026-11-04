@@ -198,11 +198,11 @@ def get_stock_prices(ticker_code):
         pass
     return prices
 
-@st.cache_data(ttl=1800)
+@st.cache_data(ttl=600)
 def get_fundamentals_summary(ticker_code):
     """
     Yahoo!ファイナンスから主要ファンダメンタルズ概要を抽出
-    市場、時価総額、業種、PER、PBR、配当利回り、決算予定日（ルールに応じた背景色情報付き）
+    市場、時価総額、業種、PER、PBR、配当利回り、決算予定日（アラート背景色対応）
     """
     clean_code = clean_ticker_code(ticker_code)
     data = {
@@ -214,7 +214,7 @@ def get_fundamentals_summary(ticker_code):
         "pbr": "-",
         "dividend_yield": "-",
         "settlement_date": "-",
-        "settlement_bg": "transparent",
+        "settlement_bg": "#f0f2f6",
         "settlement_color": "#333333"
     }
     headers = {
@@ -240,18 +240,22 @@ def get_fundamentals_summary(ticker_code):
                 mapping = {"PRM": "プライム", "STD": "スタンダード", "GRW": "グロース"}
                 data["market"] = mapping.get(raw_m, raw_m)
 
-            # 2. 業種（ヘッダー部のコード横にある業種名：例「6315 機械」）
-            for sec in JPX_33_SECTORS:
-                if f"{clean_code} {sec}" in page_text or f">{sec}<" in page_text[:15000]:
-                    data["industry"] = sec
-                    break
+            # 2. 業種（銘柄コード直後のヘッダー文字列から東証33業種を判定）
+            m_sec_area = re.search(rf'{clean_code}\s*([^\s<"\'&]+)', page_text)
+            if m_sec_area and m_sec_area.group(1) in JPX_33_SECTORS:
+                data["industry"] = m_sec_area.group(1)
+            else:
+                for sec in JPX_33_SECTORS:
+                    if f">{sec}<" in page_text[:12000] or f" {sec} " in page_text[:12000]:
+                        data["industry"] = sec
+                        break
 
             # 3. 本決算月の判定
             m_fisc = re.search(r'(?:決算期|決算月|事業年度)[^0-9]*(\d{1,2})月', page_text)
             if m_fisc:
                 fiscal_month = int(m_fisc.group(1))
 
-            # 4. 参考指標テーブル（時価総額、PER、PBR、利回り）
+            # 4. 指標テーブル（時価総額、PER、PBR、利回り）
             for dt in soup.find_all(['dt', 'th']):
                 dd = dt.find_next_sibling(['dd', 'td'])
                 if not dd:
@@ -288,17 +292,18 @@ def get_fundamentals_summary(ticker_code):
                     if m_div:
                         data["dividend_yield"] = f"{m_div.group(1)}%"
 
-            # 5. 次回決算予定日（キャプチャで確認した上部の pressReleaseScheduleLink をピンポイント取得）
-            sched_link = soup.find('a', class_=re.compile(r'pressReleaseScheduleLink', re.I))
-            if sched_link:
-                link_text = sched_link.get_text().strip()
-                m_date = re.search(r'(\d{4})[/-](\d{1,2})[/-](0?[1-9]|[12][0-9]|3[01])\b', link_text)
-                if m_date:
-                    y = int(m_date.group(1))
-                    m = int(m_date.group(2))
-                    d = int(m_date.group(3))
-                    future_d_obj = datetime.date(y, m, d)
-                    future_date_str = f"{y}/{m:02d}/{d:02d}"
+            # 5. 次回決算予定日（DevToolsで確認した financials リンクのテキストから取得）
+            for a_link in soup.find_all('a', href=re.compile(r'/financials')):
+                l_text = a_link.get_text().strip()
+                if "決算発表予定日" in l_text:
+                    m_date = re.search(r'(\d{4})[/-](\d{1,2})[/-](0?[1-9]|[12][0-9]|3[01])\b', l_text)
+                    if m_date:
+                        y = int(m_date.group(1))
+                        m = int(m_date.group(2))
+                        d = int(m_date.group(3))
+                        future_d_obj = datetime.date(y, m, d)
+                        future_date_str = f"{y}/{m:02d}/{d:02d}"
+                        break
 
             # 貸借区分
             if "制度信用" in page_text and "貸借" not in page_text:
@@ -327,12 +332,11 @@ def get_fundamentals_summary(ticker_code):
             data["settlement_bg"] = "#fff3e0"
             data["settlement_color"] = "#ef6c00"
         else:
-            # それ以上：通常背景
             data["settlement_bg"] = "#f0f2f6"
             data["settlement_color"] = "#333333"
 
     else:
-        # 【ルール2】：次回予定が無い（直近発表終了）場合、決算タブ（/financials）の実績を取得
+        # 【ルール2】：次回予定が無い場合、決算タブ（/financials）の実績を取得
         url_fin = f"https://finance.yahoo.co.jp/quote/{clean_code}.T/financials"
         past_date_str = None
         past_quarter_str = ""
@@ -341,7 +345,7 @@ def get_fundamentals_summary(ticker_code):
             if res_fin.status_code == 200:
                 fin_soup = BeautifulSoup(res_fin.text, 'html.parser')
 
-                # <time> タグから発表日を直接抽出（例: 2026年10月8日）
+                # <time> タグから発表日を直接抽出（DevToolsキャプチャ準拠）
                 time_tag = fin_soup.find('time')
                 if time_tag:
                     dt_attr = time_tag.get('datetime', '')
@@ -354,7 +358,7 @@ def get_fundamentals_summary(ticker_code):
                         d = int(m_time.group(3))
                         past_date_str = f"{y}/{m:02d}/{d:02d}"
 
-                # 四半期の特定（まとめ文中の「第2四半期」「中間」など）
+                # 四半期の特定（まとめテキストから判定）
                 fin_text = res_fin.text
                 if "第1四半期" in fin_text:
                     past_quarter_str = " (Q1)"
