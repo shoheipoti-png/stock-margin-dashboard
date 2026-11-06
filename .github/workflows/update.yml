@@ -1,8 +1,9 @@
 name: JPX Data Update
 
 on:
-  # schedule:
-  #   - cron: '37 8 * * 1-5'
+  schedule:
+    # 毎日 日本時間 17:45 (UTC 08:45) 月〜金 に実行
+    - cron: '45 8 * * 1-5'
   workflow_dispatch: # 手動実行用ボタン
 
 jobs:
