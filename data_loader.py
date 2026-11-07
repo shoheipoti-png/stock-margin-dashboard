@@ -29,7 +29,6 @@ def clean_ticker_code(val):
     return s[:4] if len(s) >= 4 else s
 
 def deduce_quarter(fiscal_month: int, announce_month: int) -> str:
-    """決算月と発表予定月から第何四半期かを判定"""
     diff = (announce_month - fiscal_month) % 12
     if diff in [1, 2, 3]:
         return " (本決算)"
@@ -41,9 +40,9 @@ def deduce_quarter(fiscal_month: int, announce_month: int) -> str:
         return " (Q3)"
     return ""
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def load_data_from_sheet(sheet_type="margin"):
-    """Googleスプレッドシートからデータを取得"""
+    """Googleスプレッドシートからデータを取得（TTLを300秒に延長して負荷低減）"""
     try:
         creds_raw = st.secrets.get("GCP_SERVICE_ACCOUNT_KEY") or os.environ.get("GCP_SERVICE_ACCOUNT_KEY")
         if not creds_raw:
@@ -64,121 +63,9 @@ def load_data_from_sheet(sheet_type="margin"):
     except Exception:
         return pd.DataFrame()
 
-@st.cache_data(ttl=86400)
-def get_company_name_from_yahoo_japan(ticker_code):
-    """Yahoo!ファイナンス（日本）から銘柄名を確実にスクレイピング"""
-    clean_code = clean_ticker_code(ticker_code)
-    url = f"https://finance.yahoo.co.jp/quote/{clean_code}.T"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    try:
-        res = requests.get(url, headers=headers, timeout=5)
-        if res.status_code == 200:
-            soup = BeautifulSoup(res.text, 'html.parser')
-            title_text = soup.title.string if soup.title else ""
-            if "【" in title_text:
-                raw_name = title_text.split("【")[0].strip()
-                return raw_name.replace("(株)", "").replace("（株）", "").replace("ホールディングス", "HD").strip()
-            h1 = soup.find('h1')
-            if h1:
-                return h1.text.split("【")[0].replace("(株)", "").replace("（株）", "").replace("ホールディングス", "HD").strip()
-    except Exception:
-        pass
-    return ""
-
-@st.cache_data(ttl=60)
-def get_yahoo_realtime_and_pts(ticker_code):
-    """Yahoo!ファイナンスから東証株価・前日比・騰落率および夜間PTS情報を完全抽出"""
-    clean_code = clean_ticker_code(ticker_code)
-    url = f"https://finance.yahoo.co.jp/quote/{clean_code}.T"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    result = {
-        "price": None,
-        "change_val": None,
-        "change_pct": None,
-        "pts_price": None,
-        "pts_diff_val": None,
-        "pts_diff_pct": None,
-    }
-    try:
-        res = requests.get(url, headers=headers, timeout=5)
-        if res.status_code != 200:
-            return result
-        
-        soup = BeautifulSoup(res.text, 'html.parser')
-
-        price_box = soup.find(class_=re.compile(r'CommonPriceBoard__price\b|CommonPriceBoard__price__'))
-        if price_box:
-            val_span = price_box.find('span', class_=re.compile(r'StyledNumber__value'))
-            if val_span:
-                result["price"] = val_span.get_text().strip()
-        
-        if not result["price"]:
-            for sp in soup.find_all(class_=re.compile(r'[Pp]rice')):
-                val_span = sp.find('span', class_=re.compile(r'StyledNumber__value'))
-                if val_span:
-                    txt = val_span.get_text().strip()
-                    if re.match(r'^[1-9][0-9]{0,2}(?:,[0-9]{3})+(?:\.[0-9]+)?$', txt):
-                        result["price"] = txt
-                        break
-
-        primary_box = soup.find(class_=re.compile(r'PriceChangeLabel__primary'))
-        if primary_box:
-            val_span = primary_box.find('span', class_=re.compile(r'StyledNumber__value'))
-            if val_span:
-                result["change_val"] = val_span.get_text().strip()
-
-        all_secondary = soup.find_all(class_=re.compile(r'PriceChangeLabel__secondary'))
-        if all_secondary:
-            pct_span = all_secondary[0].find('span', class_=re.compile(r'StyledNumber__value'))
-            if pct_span:
-                raw_pct = pct_span.get_text().strip()
-                result["change_pct"] = f"{raw_pct}%" if not raw_pct.endswith('%') else raw_pct
-
-        pts_price_box = soup.find(class_=re.compile(r'CommonPriceBoard__ptsPrice'))
-        if pts_price_box:
-            pts_val_span = pts_price_box.find('span', class_=re.compile(r'StyledNumber__value'))
-            if pts_val_span:
-                result["pts_price"] = pts_val_span.get_text().strip()
-
-        pts_label = soup.find(class_=re.compile(r'CommonPriceBoard__ptsLabel'))
-        if pts_label:
-            pts_parent = pts_label.find_parent('li') or pts_label.find_parent('div') or pts_label.parent
-            if pts_parent:
-                pts_sec = pts_parent.find_all(class_=re.compile(r'PriceChangeLabel'))
-                for sec in pts_sec:
-                    sec_text = sec.get_text().strip()
-                    m = re.search(r'([+-]?[0-9,]+(?:\.[0-9]+)?)\s*\(?([+-]?[0-9.]+[%％]?)\)?', sec_text)
-                    if m:
-                        result["pts_diff_val"] = m.group(1).strip()
-                        pct_val = m.group(2).strip()
-                        result["pts_diff_pct"] = f"{pct_val}%" if not pct_val.endswith('%') else pct_val
-                        break
-                    
-                    vals = sec.find_all('span', class_=re.compile(r'StyledNumber__value'))
-                    if len(vals) >= 2:
-                        result["pts_diff_val"] = vals[0].get_text().strip()
-                        pct_v = vals[1].get_text().strip()
-                        result["pts_diff_pct"] = f"{pct_v}%" if not pct_v.endswith('%') else pct_v
-                        break
-                    elif len(vals) == 1:
-                        txt = vals[0].get_text().strip()
-                        if '.' in txt:
-                            result["pts_diff_pct"] = f"{txt}%" if not txt.endswith('%') else txt
-                        else:
-                            result["pts_diff_val"] = txt
-
-    except Exception as e:
-        print(f"Yahoo取得エラー ({ticker_code}): {e}")
-
-    return result
-
 @st.cache_data(ttl=3600)
 def get_stock_prices(ticker_code):
-    """yfinanceから株価履歴（終値・騰落率・出来高）を取得"""
+    """yfinanceから過去株価履歴（終値・出来高）を取得"""
     clean_code = clean_ticker_code(ticker_code)
     prices = {}
     try:
@@ -198,57 +85,108 @@ def get_stock_prices(ticker_code):
         pass
     return prices
 
-@st.cache_data(ttl=600)
-def get_fundamentals_summary(ticker_code):
+@st.cache_data(ttl=120)
+def fetch_yahoo_complete_data(ticker_code):
     """
-    Yahoo!ファイナンスから主要ファンダメンタルズ概要を抽出
-    市場、時価総額、業種、PER、PBR、配当利回り、決算予定日（アラート背景色対応）
+    Yahoo!ファイナンスへのリクエストを原則1回に集約し、
+    銘柄名・株価・PTS・ファンダメンタルズ・決算予定を一度に抽出
     """
     clean_code = clean_ticker_code(ticker_code)
-    data = {
+    res_dict = {
+        "company_name": "",
+        "price": None,
+        "change_val": None,
+        "change_pct": None,
+        "pts_price": None,
+        "pts_diff_val": None,
+        "pts_diff_pct": None,
         "market": "-",
         "margin_type": "貸借",
-        "market_cap": "-",
         "industry": "-",
+        "market_cap": "-",
         "per": "-",
         "pbr": "-",
         "dividend_yield": "-",
-        "settlement_date": "-",
+        "settlement_date": "未定",
         "settlement_bg": "#f0f2f6",
-        "settlement_color": "#333333"
-    }
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "settlement_color": "#666666"
     }
 
-    fiscal_month = 3
-    today_date = datetime.date.today()
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "ja,en-US;q=0.9,en;q=0.8",
+        "Referer": "https://finance.yahoo.co.jp/"
+    }
+
+    url_quote = f"https://finance.yahoo.co.jp/quote/{clean_code}.T"
     future_date_str = None
     future_d_obj = None
+    fiscal_month = 3
+    today_date = datetime.date.today()
 
-    # ----------------------------------------------------
-    # 1. トップページから各種指標と「次回決算予定日」を取得
-    # ----------------------------------------------------
-    url_quote = f"https://finance.yahoo.co.jp/quote/{clean_code}.T"
     try:
         res = requests.get(url_quote, headers=headers, timeout=6)
         if res.status_code == 200:
             page_text = res.text
             soup = BeautifulSoup(page_text, 'html.parser')
 
-            # 市場判定
+            # 1. 銘柄名抽出
+            title_text = soup.title.string if soup.title else ""
+            if "【" in title_text:
+                res_dict["company_name"] = title_text.split("【")[0].replace("(株)", "").replace("（株）", "").replace("ホールディングス", "HD").strip()
+            elif soup.find('h1'):
+                res_dict["company_name"] = soup.find('h1').text.split("【")[0].replace("(株)", "").replace("（株）", "").replace("ホールディングス", "HD").strip()
+
+            # 2. 東証株価・前日比
+            price_box = soup.find(class_=re.compile(r'CommonPriceBoard__price\b|CommonPriceBoard__price__'))
+            if price_box:
+                val_span = price_box.find('span', class_=re.compile(r'StyledNumber__value'))
+                if val_span:
+                    res_dict["price"] = val_span.get_text().strip()
+
+            primary_box = soup.find(class_=re.compile(r'PriceChangeLabel__primary'))
+            if primary_box:
+                val_span = primary_box.find('span', class_=re.compile(r'StyledNumber__value'))
+                if val_span:
+                    res_dict["change_val"] = val_span.get_text().strip()
+
+            all_secondary = soup.find_all(class_=re.compile(r'PriceChangeLabel__secondary'))
+            if all_secondary:
+                pct_span = all_secondary[0].find('span', class_=re.compile(r'StyledNumber__value'))
+                if pct_span:
+                    raw_pct = pct_span.get_text().strip()
+                    res_dict["change_pct"] = f"{raw_pct}%" if not raw_pct.endswith('%') else raw_pct
+
+            # 3. 夜間PTS株価
+            pts_price_box = soup.find(class_=re.compile(r'CommonPriceBoard__ptsPrice'))
+            if pts_price_box:
+                pts_val_span = pts_price_box.find('span', class_=re.compile(r'StyledNumber__value'))
+                if pts_val_span:
+                    res_dict["pts_price"] = pts_val_span.get_text().strip()
+
+            pts_label = soup.find(class_=re.compile(r'CommonPriceBoard__ptsLabel'))
+            if pts_label:
+                pts_parent = pts_label.find_parent('li') or pts_label.find_parent('div') or pts_label.parent
+                if pts_parent:
+                    pts_sec = pts_parent.find_all(class_=re.compile(r'PriceChangeLabel'))
+                    for sec in pts_sec:
+                        m = re.search(r'([+-]?[0-9,]+(?:\.[0-9]+)?)\s*\(?([+-]?[0-9.]+[%％]?)\)?', sec.get_text().strip())
+                        if m:
+                            res_dict["pts_diff_val"] = m.group(1).strip()
+                            pct_val = m.group(2).strip()
+                            res_dict["pts_diff_pct"] = f"{pct_val}%" if not pct_val.endswith('%') else pct_val
+                            break
+
+            # 4. 市場・業種・指標
             m_market = re.search(r'東証(PRM|STD|GRW|プライム|スタンダード|グロース)', page_text)
             if m_market:
-                raw_m = m_market.group(1)
                 mapping = {"PRM": "プライム", "STD": "スタンダード", "GRW": "グロース"}
-                data["market"] = mapping.get(raw_m, raw_m)
+                res_dict["market"] = mapping.get(m_market.group(1), m_market.group(1))
 
-            # 決算期判定
             m_fisc = re.search(r'(?:決算期|決算月|事業年度)[^0-9]*(\d{1,2})月', page_text)
             if m_fisc:
                 fiscal_month = int(m_fisc.group(1))
 
-            # 指標テーブル（時価総額、PER、PBR、利回り）
             for dt in soup.find_all(['dt', 'th']):
                 dd = dt.find_next_sibling(['dd', 'td'])
                 if not dd:
@@ -256,136 +194,110 @@ def get_fundamentals_summary(ticker_code):
                 label = dt.get_text().strip()
                 val = dd.get_text().strip()
 
-                if "時価総額" in label and data["market_cap"] == "-":
+                if "時価総額" in label and res_dict["market_cap"] == "-":
                     m_cap = re.search(r'([0-9,]+(?:\.[0-9]+)?)\s*(兆|億|百万円)', val)
                     if m_cap:
                         val_num = float(m_cap.group(1).replace(',', ''))
                         unit = m_cap.group(2)
                         if unit == "百万円":
                             oku = val_num / 100.0
-                            if oku >= 10000:
-                                data["market_cap"] = f"{oku / 10000:.2f}兆円"
-                            else:
-                                data["market_cap"] = f"{int(oku):,}億円"
+                            res_dict["market_cap"] = f"{oku / 10000:.2f}兆円" if oku >= 10000 else f"{int(oku):,}億円"
                         else:
-                            data["market_cap"] = f"{m_cap.group(1)}{unit}円"
+                            res_dict["market_cap"] = f"{m_cap.group(1)}{unit}円"
 
-                if ("PER" in label or "ＰＥＲ" in label) and data["per"] == "-":
+                if ("PER" in label or "ＰＥＲ" in label) and res_dict["per"] == "-":
                     m_per = re.search(r'([0-9,]+(?:\.[0-9]+)?)\s*倍', val)
-                    if m_per:
-                        data["per"] = f"{m_per.group(1)}倍"
+                    if m_per: res_dict["per"] = f"{m_per.group(1)}倍"
 
-                if ("PBR" in label or "ＰＢＲ" in label) and data["pbr"] == "-":
+                if ("PBR" in label or "ＰＢＲ" in label) and res_dict["pbr"] == "-":
                     m_pbr = re.search(r'([0-9,]+(?:\.[0-9]+)?)\s*倍', val)
-                    if m_pbr:
-                        data["pbr"] = f"{m_pbr.group(1)}倍"
+                    if m_pbr: res_dict["pbr"] = f"{m_pbr.group(1)}倍"
 
-                if ("利回り" in label or "配当" in label) and data["dividend_yield"] == "-":
+                if ("利回り" in label or "配当" in label) and res_dict["dividend_yield"] == "-":
                     m_div = re.search(r'([0-9,]+(?:\.[0-9]+)?)\s*[%％]', val)
-                    if m_div:
-                        data["dividend_yield"] = f"{m_div.group(1)}%"
+                    if m_div: res_dict["dividend_yield"] = f"{m_div.group(1)}%"
 
-            # 次回決算予定日（/financials リンク内のテキストを取得）
+            # 5. 次回決算予定日
             for a_link in soup.find_all('a', href=re.compile(r'/financials')):
                 l_text = a_link.get_text().strip()
                 if "決算発表予定日" in l_text:
                     m_date = re.search(r'(\d{4})[/-](\d{1,2})[/-](0?[1-9]|[12][0-9]|3[01])\b', l_text)
                     if m_date:
-                        y = int(m_date.group(1))
-                        m = int(m_date.group(2))
-                        d = int(m_date.group(3))
+                        y, m, d = int(m_date.group(1)), int(m_date.group(2)), int(m_date.group(3))
                         future_d_obj = datetime.date(y, m, d)
                         future_date_str = f"{y}/{m:02d}/{d:02d}"
                         break
 
-            # 貸借区分
             if "制度信用" in page_text and "貸借" not in page_text:
-                data["margin_type"] = "制度"
+                res_dict["margin_type"] = "制度"
             elif "貸借" in page_text:
-                data["margin_type"] = "貸借"
+                res_dict["margin_type"] = "貸借"
 
     except Exception as e:
-        print(f"Yahooファンダ取得エラー ({ticker_code}): {e}")
+        print(f"Yahoo一括取得エラー ({ticker_code}): {e}")
 
-    # ----------------------------------------------------
-    # 2. プロファイルページから「業種」と「本決算月」を確実に取得
-    # ----------------------------------------------------
-    url_profile = f"https://finance.yahoo.co.jp/quote/{clean_code}.T/profile"
-    try:
-        res_prof = requests.get(url_profile, headers=headers, timeout=5)
-        if res_prof.status_code == 200:
-            prof_soup = BeautifulSoup(res_prof.text, 'html.parser')
-            for tag in prof_soup.find_all(['dd', 'td', 'a', 'span']):
-                txt = tag.get_text().strip()
-                if txt in JPX_33_SECTORS:
-                    data["industry"] = txt
-                    break
+    # 業種判定（トップページから取れない場合のみprofileを参照）
+    for sec in JPX_33_SECTORS:
+        if f">{sec}<" in page_text[:15000] or f" {sec} " in page_text[:15000]:
+            res_dict["industry"] = sec
+            break
 
-            p_text = res_prof.text
-            m_fisc_p = re.search(r'決算期[^0-9]*(\d{1,2})月', p_text)
-            if m_fisc_p:
-                fiscal_month = int(m_fisc_p.group(1))
-    except Exception as e:
-        print(f"Yahooプロファイル取得エラー ({ticker_code}): {e}")
+    if res_dict["industry"] == "-":
+        try:
+            r_prof = requests.get(f"https://finance.yahoo.co.jp/quote/{clean_code}.T/profile", headers=headers, timeout=4)
+            if r_prof.status_code == 200:
+                p_soup = BeautifulSoup(r_prof.text, 'html.parser')
+                for tag in p_soup.find_all(['dd', 'td', 'a', 'span']):
+                    txt = tag.get_text().strip()
+                    if txt in JPX_33_SECTORS:
+                        res_dict["industry"] = txt
+                        break
+        except Exception:
+            pass
 
-    # ----------------------------------------------------
-    # 3. 決算日と背景色の確定ルール
-    # ----------------------------------------------------
+    # 決算予定日と背景色ステータスの確定
     if future_date_str and future_d_obj:
-        # 【ルール1】：次回予定日が存在する場合（未来日付）
         q_label = deduce_quarter(fiscal_month, future_d_obj.month)
-        data["settlement_date"] = f"{future_date_str}{q_label}"
-
+        res_dict["settlement_date"] = f"{future_date_str}{q_label}"
         days_left = (future_d_obj - today_date).days
         if days_left <= 3:
-            data["settlement_bg"] = "#ffebee"
-            data["settlement_color"] = "#c62828"
+            res_dict["settlement_bg"] = "#ffebee"
+            res_dict["settlement_color"] = "#c62828"
         elif days_left <= 7:
-            data["settlement_bg"] = "#fff3e0"
-            data["settlement_color"] = "#ef6c00"
+            res_dict["settlement_bg"] = "#fff3e0"
+            res_dict["settlement_color"] = "#ef6c00"
         else:
-            data["settlement_bg"] = "#f0f2f6"
-            data["settlement_color"] = "#333333"
-
+            res_dict["settlement_bg"] = "#f0f2f6"
+            res_dict["settlement_color"] = "#333333"
     else:
-        # 【ルール2】：次回予定が無い（直近発表終了）場合、決算タブの実績を取得
-        url_fin = f"https://finance.yahoo.co.jp/quote/{clean_code}.T/financials"
-        past_date_str = None
-        past_quarter_str = ""
+        # 次回予定がない場合のみ financials タグをフォールバック参照
         try:
-            res_fin = requests.get(url_fin, headers=headers, timeout=5)
-            if res_fin.status_code == 200:
-                fin_text = res_fin.text
-                
-                # 「発表日：2026年10月8日」などのパターンを直接抽出
+            r_fin = requests.get(f"https://finance.yahoo.co.jp/quote/{clean_code}.T/financials", headers=headers, timeout=4)
+            if r_fin.status_code == 200:
+                fin_text = r_fin.text
                 m_announce = re.search(r'発表日[^\d]*(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})', fin_text)
                 if m_announce:
-                    y = int(m_announce.group(1))
-                    m = int(m_announce.group(2))
-                    d = int(m_announce.group(3))
-                    past_date_str = f"{y}/{m:02d}/{d:02d}"
+                    y, m, d = int(m_announce.group(1)), int(m_announce.group(2)), int(m_announce.group(3))
+                    past_d_str = f"{y}/{m:02d}/{d:02d}"
+                    q_str = " (Q2)" if "第2四半期" in fin_text or "中間" in fin_text else (
+                            " (Q1)" if "第1四半期" in fin_text else (
+                            " (Q3)" if "第3四半期" in fin_text else (
+                            " (本決算)" if "本決算" in fin_text else deduce_quarter(fiscal_month, m))))
+                    res_dict["settlement_date"] = f"{past_d_str}{q_str} (済)"
+                    res_dict["settlement_bg"] = "#e3f2fd"
+                    res_dict["settlement_color"] = "#1565c0"
+        except Exception:
+            pass
 
-                # 四半期の特定
-                if "第1四半期" in fin_text:
-                    past_quarter_str = " (Q1)"
-                elif "第2四半期" in fin_text or "中間" in fin_text:
-                    past_quarter_str = " (Q2)"
-                elif "第3四半期" in fin_text:
-                    past_quarter_str = " (Q3)"
-                elif "本決算" in fin_text:
-                    past_quarter_str = " (本決算)"
-                elif past_date_str:
-                    past_quarter_str = deduce_quarter(fiscal_month, int(past_date_str.split('/')[1]))
-        except Exception as e:
-            print(f"Yahoo決算実績取得エラー ({ticker_code}): {e}")
+    return res_dict
 
-        if past_date_str:
-            data["settlement_date"] = f"{past_date_str}{past_quarter_str} (済)"
-            data["settlement_bg"] = "#e3f2fd"
-            data["settlement_color"] = "#1565c0"
-        else:
-            data["settlement_date"] = "未定"
-            data["settlement_bg"] = "#f0f2f6"
-            data["settlement_color"] = "#666666"
+# 後方互換用エイリアス
+def get_company_name_from_yahoo_japan(ticker_code):
+    return fetch_yahoo_complete_data(ticker_code).get("company_name", "")
 
-    return data
+def get_yahoo_realtime_and_pts(ticker_code):
+    d = fetch_yahoo_complete_data(ticker_code)
+    return {k: d[k] for k in ["price", "change_val", "change_pct", "pts_price", "pts_diff_val", "pts_diff_pct"]}
+
+def get_fundamentals_summary(ticker_code):
+    return fetch_yahoo_complete_data(ticker_code)
