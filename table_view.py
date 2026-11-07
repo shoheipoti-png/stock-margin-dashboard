@@ -30,98 +30,66 @@ def get_short_inst_name(full_name: str) -> str:
     return str(full_name)[:6]
 
 def smart_format(val) -> str:
+    if val is None or val == "" or val == "-":
+        return "-"
     try:
-        if val == "" or val is None or val == "-": return "-"
         num = float(str(val).replace(',', ''))
         if abs(num) >= 1_000_000: return f"{num / 1_000_000:.2f}M"
         elif abs(num) >= 1_000: return f"{num / 1_000:.1f}K"
-        else: return f"{int(num)}"
-    except:
+        return f"{int(num):,}"
+    except Exception:
         return str(val)
 
-def format_change(num):
+def format_change(num) -> tuple:
+    if num is None or num == "" or num == "-":
+        return "-", "#666666", "transparent"
     try:
-        if num == "" or num is None or num == "-": return "-", "#666", "transparent"
         val = float(str(num).replace(',', ''))
-        if val == 0: return "0", "#666", "#f0f2f6"
+        if val == 0:
+            return "0", "#666666", "#f0f2f6"
         color = "#d32f2f" if val > 0 else "#1976d2"
         bg = "#ffebee" if val > 0 else "#e3f2fd"
         sign = "+" if val > 0 else ""
-        if abs(val) >= 1_000_000: formatted = f"{sign}{val / 1_000_000:.2f}M"
-        elif abs(val) >= 1_000: formatted = f"{sign}{val / 1_000:.1f}K"
-        else: formatted = f"{sign}{int(val)}"
-        return formatted, color, bg
-    except:
-        return str(num), "#666", "#f0f2f6"
+        if abs(val) >= 1_000_000: f_str = f"{sign}{val / 1_000_000:.2f}M"
+        elif abs(val) >= 1_000: f_str = f"{sign}{val / 1_000:.1f}K"
+        else: f_str = f"{sign}{int(val):,}"
+        return f_str, color, bg
+    except Exception:
+        return str(num), "#666666", "#f0f2f6"
 
-def format_pct(num):
+def format_pct(num) -> tuple:
+    if num is None: return "-", "#666666"
     try:
         val = float(num)
-        if val == 0: return "0.0%", "#666"
+        if val == 0: return "0.0%", "#666666"
         color = "#d32f2f" if val > 0 else "#1976d2"
         sign = "+" if val > 0 else ""
         return f"{sign}{val:.1f}%", color
-    except:
-        return "-", "#666"
+    except Exception:
+        return "-", "#666666"
 
 def render_institution_summary_html(institutions: list, title_label: str) -> str:
-    """上部の機関参加一覧ボックス"""
     if not institutions:
         return ""
-    
-    rows_html = ""
-    for idx, inst in enumerate(institutions, 1):
-        rows_html += f"""
-            <tr style="background-color: #ffffff !important; color: #1a1a1a !important;">
-                <td style="padding: 6px 8px; border: 1px solid #ddd; text-align: center; font-weight: bold; color: #333333 !important; background-color: #f7f9fa !important; width: 50px;">{idx}</td>
-                <td style="padding: 6px 12px; border: 1px solid #ddd; text-align: left; font-size: 13px; font-weight: 500; color: #1a1a1a !important; background-color: #ffffff !important;">{inst}</td>
-            </tr>
-        """
-        
-    html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-    <meta charset="utf-8">
-    <meta name="color-scheme" content="light">
-    <style>
-      :root {{ color-scheme: light; }}
-      body {{ margin: 0; padding: 0; background-color: #ffffff !important; color: #1a1a1a !important; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }}
-      table {{ width: 100%; border-collapse: collapse; background-color: #ffffff !important; }}
-      th, td {{ color: #1a1a1a !important; }}
-    </style>
-    </head>
-    <body>
-    <div style="margin-bottom: 8px; border: 1px solid #d0d7de; border-radius: 6px; overflow: hidden; background-color: #ffffff !important;">
-        <div style="background-color: #262730 !important; color: #ffffff !important; padding: 7px 12px; font-weight: bold; font-size: 13px;">
-            🏢 {title_label} 空売り参加機関一覧 ({len(institutions)}社)
-        </div>
-        <table>
-            <thead>
-                <tr style="background-color: #f0f2f6 !important; color: #333333 !important;">
-                    <th style="padding: 5px 8px; border: 1px solid #ddd; width: 50px; text-align: center; font-size: 12px; color: #333333 !important;">No.</th>
-                    <th style="padding: 5px 12px; border: 1px solid #ddd; text-align: left; font-size: 12px; color: #333333 !important;">空売り機関名</th>
-                </tr>
-            </thead>
-            <tbody>
-                {rows_html}
-            </tbody>
-        </table>
-    </div>
-    </body>
-    </html>
-    """
-    return html
+    rows = [
+        f'<tr style="background:#fff !important; color:#1a1a1a !important;">'
+        f'<td style="padding:6px 8px; border:1px solid #ddd; text-align:center; font-weight:bold; background:#f7f9fa !important; width:50px;">{idx}</td>'
+        f'<td style="padding:6px 12px; border:1px solid #ddd; text-align:left; font-size:13px; font-weight:500;">{inst}</td>'
+        f'</tr>'
+        for idx, inst in enumerate(institutions, 1)
+    ]
+    return f"""<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="color-scheme" content="light">
+    <style>:root {{ color-scheme: light; }} body {{ margin:0; background:#fff !important; color:#1a1a1a !important; font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }} table {{ width:100%; border-collapse:collapse; background:#fff !important; }}</style>
+    </head><body><div style="margin-bottom:8px; border:1px solid #d0d7de; border-radius:6px; overflow:hidden;">
+    <div style="background:#262730 !important; color:#fff !important; padding:7px 12px; font-weight:bold; font-size:13px;">🏢 {title_label} 空売り参加機関一覧 ({len(institutions)}社)</div>
+    <table><thead><tr style="background:#f0f2f6 !important; color:#333 !important;"><th style="padding:5px 8px; border:1px solid #ddd; width:50px; text-align:center; font-size:12px;">No.</th><th style="padding:5px 12px; border:1px solid #ddd; text-align:left; font-size:12px;">空売り機関名</th></tr></thead>
+    <tbody>{"".join(rows)}</tbody></table></div></body></html>"""
 
 def render_main_table_html(model: SupplyDemandModel) -> str:
-    """
-    SupplyDemandModelを受け取ってメインHTMLテーブルを生成
-    （株価終値/前日比・出来高のバッジカラー対応、全営業日引き継ぎ反映済み）
-    """
     institutions = model.institutions
     sorted_dates = model.dates
     inst_count = len(institutions)
-    
+
     header_tr1 = (
         '<tr style="background-color: #262730 !important; color: #ffffff !important;">'
         '<th rowspan="2" style="border: 1px solid #444; padding: 10px; text-align: center; width: 7%; color: #ffffff !important;">Date</th>'
@@ -154,8 +122,7 @@ def render_main_table_html(model: SupplyDemandModel) -> str:
         except:
             date_str = d
 
-        # 前営業日の情報（差分計算用）
-        prev_d = sorted_dates[i+1] if i + 1 < len(sorted_dates) else None
+        prev_d = sorted_dates[i + 1] if i + 1 < len(sorted_dates) else None
         prev_price_info = model.price_records.get(prev_d) if prev_d else None
 
         # 1. 株価・出来高セル
@@ -176,66 +143,53 @@ def render_main_table_html(model: SupplyDemandModel) -> str:
             close_display = f"{close_val:,.0f}円{diff_text}" if close_val is not None else "-"
             pct_display, _ = format_pct(pct_val)
 
-            if pct_val > 0:
-                p_col, p_bg = "#d32f2f", "#ffebee"
-            elif pct_val < 0:
-                p_col, p_bg = "#1976d2", "#e3f2fd"
-            else:
-                p_col, p_bg = "#333333", "#f0f2f6"
+            if pct_val > 0: p_col, p_bg = "#d32f2f", "#ffebee"
+            elif pct_val < 0: p_col, p_bg = "#1976d2", "#e3f2fd"
+            else: p_col, p_bg = "#333333", "#f0f2f6"
 
             price_cell_html = (
-                f'<div style="font-weight: bold; font-size: 0.95em; color: {p_col} !important; background-color: {p_bg} !important; padding: 2px 4px; border-radius: 3px; display: inline-block; white-space: nowrap;">'
-                f'{close_display}'
-                f'</div>'
-                f'<div style="font-weight: 500; font-size: 0.8em; color: {p_col} !important; margin-top: 2px;">'
-                f'{pct_display}'
-                f'</div>'
+                f'<div style="font-weight: bold; font-size: 0.95em; color: {p_col} !important; background-color: {p_bg} !important; padding: 2px 4px; border-radius: 3px; display: inline-block; white-space: nowrap;">{close_display}</div>'
+                f'<div style="font-weight: 500; font-size: 0.8em; color: {p_col} !important; margin-top: 2px;">{pct_display}</div>'
             )
 
             if prev_price_info and cur_vol is not None and prev_price_info.get("volume") is not None:
                 v_diff = cur_vol - prev_price_info["volume"]
-                if v_diff > 0:
-                    v_col, v_bg = "#d32f2f", "#ffebee"
-                elif v_diff < 0:
-                    v_col, v_bg = "#1976d2", "#e3f2fd"
-                else:
-                    v_col, v_bg = "#333333", "#f0f2f6"
+                v_col, v_bg = ("#d32f2f", "#ffebee") if v_diff > 0 else (("#1976d2", "#e3f2fd") if v_diff < 0 else ("#333333", "#f0f2f6"))
             else:
                 v_col, v_bg = "#333333", "transparent"
 
-            vol_cell_html = (
-                f'<div style="font-weight: bold; font-size: 0.95em; color: {v_col} !important; background-color: {v_bg} !important; padding: 2px 4px; border-radius: 3px; display: inline-block;">'
-                f'{vol_str}'
-                f'</div>'
-            )
+            vol_cell_html = f'<div style="font-weight: bold; font-size: 0.95em; color: {v_col} !important; background-color: {v_bg} !important; padding: 2px 4px; border-radius: 3px; display: inline-block;">{vol_str}</div>'
         else:
             price_cell_html = '<div style="color: #666666 !important;">-</div>'
             vol_cell_html = '<div style="color: #666666 !important;">-</div>'
 
-        # 2. 機関別セル（analytics側で算出済みの daily_inst_display を展開）
+        # 2. 機関別セル
         inst_tds = ""
         for inst in institutions:
-            sh_str, d_str, d_col, d_bg, is_confirmed, status = model.daily_inst_display.get(
-                (d, inst), ("-", "-", "#888", "transparent", False, "none")
-            )
-            
+            inst_obj = model.daily_inst_data.get((d, inst), {})
+            status = inst_obj.get("status", "none")
+            is_confirmed = inst_obj.get("is_confirmed", False)
+            shares = inst_obj.get("shares")
+            diff = inst_obj.get("diff")
+
             if status == "released" and is_confirmed:
                 inst_tds += (
                     '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 6px; background-color: #ffffff !important;">'
                     '<div style="font-weight: bold; font-size: 0.85em; color: #777777 !important; background-color: #f0f2f6; border-radius: 3px; padding: 2px;">消失 (&lt;0.5%)</div>'
                     '</td>'
                 )
-            elif is_confirmed and status == "active":
+            elif is_confirmed and status == "active" and shares is not None:
+                d_str, d_col, d_bg = format_change(diff)
                 inst_tds += (
                     '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 6px; background-color: #ffffff !important; color: #1a1a1a !important;">'
-                    f'<div style="font-weight: bold; font-size: 0.95em; color: #1a1a1a !important;">{sh_str}</div>'
+                    f'<div style="font-weight: bold; font-size: 0.95em; color: #1a1a1a !important;">{smart_format(shares)}</div>'
                     f'<div style="color: {d_col} !important; background-color: {d_bg} !important; font-size: 0.8em; padding: 1px; border-radius: 2px;">{d_str}</div>'
                     '</td>'
                 )
-            elif not is_confirmed and status == "active":
+            elif not is_confirmed and status == "active" and shares is not None:
                 inst_tds += (
                     '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 6px; background-color: #fafbfc !important; color: #666666 !important;">'
-                    f'<div style="font-size: 0.9em; color: #666666 !important;" title="直近の報告値を保持">{sh_str}</div>'
+                    f'<div style="font-size: 0.9em; color: #666666 !important;" title="直近の報告値を保持">({smart_format(shares)})</div>'
                     '<div style="color: #999999 !important; font-size: 0.75em;">変動なし</div>'
                     '</td>'
                 )
@@ -249,11 +203,9 @@ def render_main_table_html(model: SupplyDemandModel) -> str:
         if cur_tot is not None:
             tot_str = smart_format(cur_tot)
             if prev_tot is not None:
-                all_diff = cur_tot - prev_tot
-                all_diff_str, all_diff_col, all_diff_bg = format_change(all_diff)
+                all_diff_str, all_diff_col, all_diff_bg = format_change(cur_tot - prev_tot)
             else:
                 all_diff_str, all_diff_col, all_diff_bg = "-", "#666", "transparent"
-
             all_change_html = (
                 f'<div style="font-weight: bold; font-size: 0.95em; color: #1a1a1a !important;">{tot_str}</div>'
                 f'<div style="color: {all_diff_col} !important; background-color: {all_diff_bg} !important; font-size: 0.8em; padding: 1px; border-radius: 2px; margin-top: 2px;">{all_diff_str}</div>'
@@ -265,12 +217,12 @@ def render_main_table_html(model: SupplyDemandModel) -> str:
         m_info = model.margin_records.get(d)
         if m_info is not None:
             r = m_info["row"]
-            tot_sell = smart_format(r.get("売残(合計)", "-"))
+            tot_sell = smart_format(m_info["cur_sell"])
             sell_chg_str, sell_chg_color, sell_chg_bg = format_change(m_info["sell_diff"])
             gen_sell = smart_format(r.get("売残(一般)", "-"))
             std_sell = smart_format(r.get("売残(制度)", "-"))
 
-            tot_buy = smart_format(r.get("買残(合計)", "-"))
+            tot_buy = smart_format(m_info["cur_buy"])
             buy_chg_str, buy_chg_color, buy_chg_bg = format_change(m_info["buy_diff"])
             gen_buy = smart_format(r.get("買残(一般)", "-"))
             std_buy = smart_format(r.get("買残(制度)", "-"))
@@ -299,13 +251,12 @@ def render_main_table_html(model: SupplyDemandModel) -> str:
         )
         rows_html.append(row_html)
 
-    body_content = "".join(rows_html)
     return (
         '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="color-scheme" content="light">'
         '<style>:root { color-scheme: light; } body { margin:0; background:#fff !important; color:#1a1a1a !important; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }</style>'
         '</head><body>'
         '<table style="width:100%; border-collapse: collapse; font-size: 13px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); background-color: #ffffff !important;">'
         f'<thead>{header_tr1}{header_tr2}</thead>'
-        f'<tbody>{body_content}</tbody>'
+        f'<tbody>{"".join(rows_html)}</tbody>'
         '</table></body></html>'
     )
