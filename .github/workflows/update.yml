@@ -1,10 +1,7 @@
 name: JPX Data Update
 
 on:
-  schedule:
-    # 毎日 日本時間の17時30分 (UTCの8:30) に自動実行（実績のある安定設定）
-    - cron: '30 8 * * *'
-  workflow_dispatch: # 手動実行用ボタン
+  workflow_dispatch: # cron-job.org からの外部トリガーおよび手動実行専用
 
 jobs:
   update-data:
