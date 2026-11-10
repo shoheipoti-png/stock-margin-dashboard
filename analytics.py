@@ -71,13 +71,19 @@ def build_supply_demand_model(
     else:
         s_filtered = pd.DataFrame()
 
-    # 2. 日付軸の統合
+    # 2. 日付軸の統合（スプレッドシート + 株価・出来高データ）
     all_dates = set()
     if not m_filtered.empty and "日付" in m_filtered.columns:
         all_dates.update(m_filtered["日付"].dropna().astype(str).tolist())
     if not s_filtered.empty:
         date_col = "計算年月日" if "計算年月日" in s_filtered.columns else "公表日"
         all_dates.update(s_filtered[date_col].dropna().astype(str).tolist())
+
+    # ★ 当日の株価・出来高がある日付も日付軸に追加
+    if stock_prices:
+        for p_date in stock_prices.keys():
+            if p_date >= cutoff_str:
+                all_dates.add(p_date)
 
     sorted_dates = sorted(list(all_dates), reverse=True) if all_dates else [
         (datetime.date.today() - datetime.timedelta(days=i)).strftime("%Y-%m-%d")
@@ -136,7 +142,12 @@ def build_supply_demand_model(
     total_short_by_date = {}
 
     has_started = False
-    latest_date = sorted_dates[0] if sorted_dates else None
+    
+    # スプレッドシート側の最新日付を特定（当日の空売り未開示判定用）
+    sheet_latest_date = None
+    if not s_filtered.empty:
+        date_col = "計算年月日" if "計算年月日" in s_filtered.columns else "公表日"
+        sheet_latest_date = s_filtered[date_col].dropna().astype(str).max()
 
     for d in chronological_dates:
         day_has_report = any((d, inst) in short_records for inst in institutions)
@@ -144,11 +155,13 @@ def build_supply_demand_model(
             has_started = True
 
         day_sum = 0.0
-        is_pending_day = (d == latest_date and not day_has_report)
+        
+        # 当日など、スプレッドシートの公表日より新しい日は「開示前（未公表）」として完全に空欄扱い
+        is_future_or_unreleased = (sheet_latest_date is not None and d > sheet_latest_date)
 
         for inst in institutions:
             item = short_records.get((d, inst))
-            if item:
+            if item and not is_future_or_unreleased:
                 shares, diff = item
                 if shares > 0:
                     tracking_state[inst] = {"shares": shares, "status": "active"}
@@ -173,7 +186,7 @@ def build_supply_demand_model(
                 prev_status = tracking_state[inst]["status"]
                 prev_shares = tracking_state[inst]["shares"]
 
-                if is_pending_day:
+                if is_future_or_unreleased:
                     daily_inst_data[(d, inst)] = {"shares": None, "diff": None, "is_confirmed": False, "status": "none"}
                 elif has_started and prev_status == "active" and prev_shares > 0:
                     daily_inst_data[(d, inst)] = {"shares": prev_shares, "diff": None, "is_confirmed": False, "status": "active"}
@@ -183,7 +196,7 @@ def build_supply_demand_model(
                 else:
                     daily_inst_data[(d, inst)] = {"shares": None, "diff": None, "is_confirmed": False, "status": "none"}
 
-        if has_started and not is_pending_day:
+        if has_started and not is_future_or_unreleased:
             daily_total_estimated[d] = day_sum
             total_short_by_date[d] = sum(running_inst_shares.values())
         else:
