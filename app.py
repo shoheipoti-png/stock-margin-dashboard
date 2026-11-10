@@ -151,12 +151,18 @@ if ticker:
             clean_ticker_func=clean_ticker_code
         )
 
-        # グラフ描画
-        c_check, _ = st.columns([0.4, 0.6])
-        with c_check:
+       # グラフ描画
+        c_check1, c_check2, _ = st.columns([0.28, 0.28, 0.44])
+        with c_check1:
             show_price = st.checkbox("📈 株価推移（右軸）を表示", value=True)
+        with c_check2:
+            show_ratio = st.checkbox("⚖️ 信用倍率を表示", value=False)
 
-        fig = render_combined_chart(model=model, show_price_line=show_price)
+        fig = render_combined_chart(
+            model=model, 
+            show_price_line=show_price, 
+            show_margin_ratio=show_ratio
+        )
         st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': False, 'displayModeBar': False, 'doubleClick': False})
 
         # 機関一覧およびメインテーブル描画
