@@ -8,9 +8,13 @@ def render_combined_chart(
 ) -> go.Figure:
     """
     SupplyDemandModelを受け取り、信用残・機関空売り・出来高、株価（右軸）、信用倍率を描画
+    （X軸の日付は 'MM-DD' 形式に整形）
     """
-    graph_dates = sorted(model.dates)
+    raw_dates = sorted(model.dates)
     title_label = model.title_label
+
+    # '2026-11-10' -> '11-10' に整形
+    display_dates = [d[5:] if len(d) >= 10 and d[4] == '-' else d for d in raw_dates]
 
     vol_list = []
     vol_colors = []
@@ -20,7 +24,7 @@ def render_combined_chart(
     price_list = []
     ratio_list = []
 
-    for d in graph_dates:
+    for d in raw_dates:
         # 株価・出来高情報
         p_info = model.price_records.get(d)
         if p_info:
@@ -64,7 +68,7 @@ def render_combined_chart(
     # 1. 出来高バー（左軸）
     fig.add_trace(
         go.Bar(
-            x=graph_dates,
+            x=display_dates,
             y=vol_list,
             name='出来高',
             marker=dict(color=vol_colors),
@@ -76,7 +80,7 @@ def render_combined_chart(
     # 2. 個人買残ライン（左軸）
     fig.add_trace(
         go.Scatter(
-            x=graph_dates,
+            x=display_dates,
             y=buy_shares,
             mode='lines+markers',
             name='個人 買残合計',
@@ -89,7 +93,7 @@ def render_combined_chart(
     # 3. 個人売残ライン（左軸）
     fig.add_trace(
         go.Scatter(
-            x=graph_dates,
+            x=display_dates,
             y=sell_shares,
             mode='lines+markers',
             name='個人 売残合計',
@@ -103,7 +107,7 @@ def render_combined_chart(
     if any(v is not None and v > 0 for v in inst_shares):
         fig.add_trace(
             go.Scatter(
-                x=graph_dates,
+                x=display_dates,
                 y=inst_shares,
                 mode='lines+markers',
                 name='機関空売り合計',
@@ -117,7 +121,7 @@ def render_combined_chart(
     if show_price_line and any(p is not None for p in price_list):
         fig.add_trace(
             go.Scatter(
-                x=graph_dates,
+                x=display_dates,
                 y=price_list,
                 mode='lines+markers',
                 name='株価 (終値)',
@@ -129,12 +133,11 @@ def render_combined_chart(
         )
 
     # 6. 信用倍率ライン
-    # 株価表示時は yaxis3（右側2列目または独立軸）、株価非表示時は yaxis2 を使用
     target_ratio_yaxis = 'y3' if show_price_line else 'y2'
     if show_margin_ratio and any(r is not None for r in ratio_list):
         fig.add_trace(
             go.Scatter(
-                x=graph_dates,
+                x=display_dates,
                 y=ratio_list,
                 mode='lines+markers',
                 name='信用倍率',
@@ -153,7 +156,7 @@ def render_combined_chart(
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         template="plotly_white",
         bargap=0.35,
-        xaxis=dict(type='category', title_text="日付", fixedrange=True, hoverformat=""),
+        xaxis=dict(type='category', title_text="日付", fixedrange=True, tickangle=0),
         yaxis=dict(title_text="株数（出来高 / 信用残）", fixedrange=True)
     )
 
