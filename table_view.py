@@ -99,7 +99,8 @@ def render_main_table_html(model: SupplyDemandModel) -> str:
     if inst_count > 0:
         header_tr1 += f'<th colspan="{inst_count}" style="border: 1px solid #444; padding: 8px; text-align: center; color: #ffffff !important;">機関投資家の空売り</th>'
     header_tr1 += (
-        '<th rowspan="2" style="border: 1px solid #444; padding: 10px; text-align: center; width: 9%; color: #ffffff !important;">全増減<br>(合計)</th>'
+        '<th rowspan="2" style="border: 1px solid #444; padding: 10px; text-align: center; width: 8%; color: #ffffff !important;">全増減<br>(合計)</th>'
+        '<th rowspan="2" style="border: 1px solid #444; padding: 10px; text-align: center; width: 7%; color: #ffffff !important;">信用倍率</th>'
         '<th colspan="2" style="border: 1px solid #444; padding: 8px; text-align: center; color: #ffffff !important;">個人信用 (合計・前日差・内訳)</th>'
         '</tr>'
     )
@@ -109,8 +110,8 @@ def render_main_table_html(model: SupplyDemandModel) -> str:
         short_label = get_short_inst_name(inst)
         header_tr2 += f'<th style="border: 1px solid #555; padding: 6px; text-align: center; color: #ffffff !important;" title="{inst}">{idx}<br>{short_label}</th>'
     header_tr2 += (
-        '<th style="border: 1px solid #555; padding: 6px; text-align: center; width: 16%; color: #ffffff !important;">売</th>'
-        '<th style="border: 1px solid #555; padding: 6px; text-align: center; width: 16%; color: #ffffff !important;">買</th>'
+        '<th style="border: 1px solid #555; padding: 6px; text-align: center; width: 13%; color: #ffffff !important;">売</th>'
+        '<th style="border: 1px solid #555; padding: 6px; text-align: center; width: 13%; color: #ffffff !important;">買</th>'
         '</tr>'
     )
 
@@ -213,22 +214,45 @@ def render_main_table_html(model: SupplyDemandModel) -> str:
         else:
             all_change_html = '<div style="color: #888888 !important;">-</div>'
 
-        # 4. 個人信用セル
+        # 4. 信用倍率 & 個人信用セル
         m_info = model.margin_records.get(d)
         if m_info is not None:
             r = m_info["row"]
-            tot_sell = smart_format(m_info["cur_sell"])
+            cur_sell = m_info["cur_sell"]
+            cur_buy = m_info["cur_buy"]
+
+            # 信用倍率の計算 (買残 ÷ 売残)
+            if cur_sell and cur_sell > 0 and cur_buy is not None:
+                ratio = cur_buy / cur_sell
+                ratio_str = f"{ratio:.2f}倍"
+                if ratio < 1.0:
+                    r_col, r_bg = "#1976d2", "#e3f2fd" # 売り長（貸借良化）
+                elif ratio >= 10.0:
+                    r_col, r_bg = "#d32f2f", "#ffebee" # 買い長（重い需給）
+                else:
+                    r_col, r_bg = "#1a1a1a", "#f0f2f6"
+            else:
+                ratio_str, r_col, r_bg = "-", "#888888", "transparent"
+
+            tot_sell = smart_format(cur_sell)
             sell_chg_str, sell_chg_color, sell_chg_bg = format_change(m_info["sell_diff"])
             gen_sell = smart_format(r.get("売残(一般)", "-"))
             std_sell = smart_format(r.get("売残(制度)", "-"))
 
-            tot_buy = smart_format(m_info["cur_buy"])
+            tot_buy = smart_format(cur_buy)
             buy_chg_str, buy_chg_color, buy_chg_bg = format_change(m_info["buy_diff"])
             gen_buy = smart_format(r.get("買残(一般)", "-"))
             std_buy = smart_format(r.get("買残(制度)", "-"))
         else:
+            ratio_str, r_col, r_bg = "-", "#888888", "transparent"
             tot_sell, sell_chg_str, sell_chg_color, sell_chg_bg, gen_sell, std_sell = "-", "0", "#666", "#f0f2f6", "-", "-"
             tot_buy, buy_chg_str, buy_chg_color, buy_chg_bg, gen_buy, std_buy = "-", "0", "#666", "#f0f2f6", "-", "-"
+
+        margin_ratio_html = (
+            f'<div style="font-weight: bold; font-size: 0.95em; color: {r_col} !important; '
+            f'background-color: {r_bg} !important; padding: 2px 4px; border-radius: 3px; display: inline-block;">'
+            f'{ratio_str}</div>'
+        )
 
         row_html = (
             '<tr style="background-color: #ffffff !important;">'
@@ -237,6 +261,7 @@ def render_main_table_html(model: SupplyDemandModel) -> str:
             f'<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 6px; background-color: #ffffff !important; color: #1a1a1a !important;">{vol_cell_html}</td>'
             f'{inst_tds}'
             f'<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 6px; background-color: #ffffff !important; color: #1a1a1a !important;">{all_change_html}</td>'
+            f'<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 6px; background-color: #ffffff !important; color: #1a1a1a !important;">{margin_ratio_html}</td>'
             '<td style="text-align: center; vertical-align: middle; border: 1px solid #ddd; padding: 8px; background-color: #ffffff !important; color: #1a1a1a !important;">'
             f'<div style="font-weight: bold; font-size: 1.05em; color: #1a1a1a !important;">{tot_sell}</div>'
             f'<div style="color: {sell_chg_color} !important; background-color: {sell_chg_bg} !important; font-size: 0.85em; padding: 2px; margin: 3px 0; border-radius: 2px;">{sell_chg_str}</div>'
@@ -253,7 +278,7 @@ def render_main_table_html(model: SupplyDemandModel) -> str:
 
     return (
         '<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="color-scheme" content="light">'
-        '<style>:root { color-scheme: light; } body { margin:0; background:#fff !important; color:#1a1a1a !important; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }</style>'
+        '<style>:root { color-scheme: light; } body {{ margin:0; background:#fff !important; color:#1a1a1a !important; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }}</style>'
         '</head><body>'
         '<table style="width:100%; border-collapse: collapse; font-size: 13px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); background-color: #ffffff !important;">'
         f'<thead>{header_tr1}{header_tr2}</thead>'
