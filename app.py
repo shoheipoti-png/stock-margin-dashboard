@@ -1,5 +1,6 @@
 import streamlit as st
 import datetime
+import re
 import streamlit.components.v1 as components
 
 import data_loader
@@ -90,6 +91,22 @@ if ticker:
         df_short = load_data_from_sheet("short")
         stock_prices = get_stock_prices(clean_target)
 
+        # ★ 深夜・未確定日足の終値・前日比自動補完処理（Yahooリアルタイム値で埋める）
+        if stock_prices and stock_data.get("price"):
+            latest_p_date = max(stock_prices.keys())
+            try:
+                y_price_val = float(str(stock_data["price"]).replace(",", ""))
+                if stock_prices[latest_p_date].get("close") is None:
+                    stock_prices[latest_p_date]["close"] = y_price_val
+                
+                # 騰落率の補完（0.0%のまま抜けている場合）
+                if stock_prices[latest_p_date].get("pct", 0.0) == 0.0 and stock_data.get("change_pct"):
+                    m_p = re.search(r'([+-]?[0-9.]+)', str(stock_data["change_pct"]))
+                    if m_p:
+                        stock_prices[latest_p_date]["pct"] = float(m_p.group(1))
+            except Exception:
+                pass
+
         # ヘッダー操作ボタン
         col_title, col_fav, col_detail, _ = st.columns([0.45, 0.12, 0.18, 0.25])
         with col_title:
@@ -151,7 +168,7 @@ if ticker:
             clean_ticker_func=clean_ticker_code
         )
 
-       # グラフ描画
+        # グラフ描画（株価・信用倍率チェックボックス横並び）
         c_check1, c_check2, _ = st.columns([0.28, 0.28, 0.44])
         with c_check1:
             show_price = st.checkbox("📈 株価推移（右軸）を表示", value=True)
