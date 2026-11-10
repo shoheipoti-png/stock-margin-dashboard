@@ -1,9 +1,13 @@
 import plotly.graph_objects as go
 from analytics import SupplyDemandModel
 
-def render_combined_chart(model: SupplyDemandModel, show_price_line: bool = True) -> go.Figure:
+def render_combined_chart(
+    model: SupplyDemandModel, 
+    show_price_line: bool = True, 
+    show_margin_ratio: bool = False
+) -> go.Figure:
     """
-    SupplyDemandModelを受け取り、信用残・機関空売り・出来高および株価（右軸）を描画
+    SupplyDemandModelを受け取り、信用残・機関空売り・出来高、株価（右軸）、信用倍率を描画
     """
     graph_dates = sorted(model.dates)
     title_label = model.title_label
@@ -14,6 +18,7 @@ def render_combined_chart(model: SupplyDemandModel, show_price_line: bool = True
     sell_shares = []
     inst_shares = []
     price_list = []
+    ratio_list = []
 
     for d in graph_dates:
         # 株価・出来高情報
@@ -35,14 +40,21 @@ def render_combined_chart(model: SupplyDemandModel, show_price_line: bool = True
             vol_colors.append("rgba(189, 189, 189, 0.30)")
             price_list.append(None)
 
-        # 個人信用残高（analytics側で算出済みの数値を取得）
+        # 個人信用残高 & 信用倍率
         m_info = model.margin_records.get(d)
         if m_info:
-            buy_shares.append(m_info.get("cur_buy"))
-            sell_shares.append(m_info.get("cur_sell"))
+            b_val = m_info.get("cur_buy")
+            s_val = m_info.get("cur_sell")
+            buy_shares.append(b_val)
+            sell_shares.append(s_val)
+            if s_val and s_val > 0 and b_val is not None:
+                ratio_list.append(round(b_val / s_val, 2))
+            else:
+                ratio_list.append(None)
         else:
             buy_shares.append(None)
             sell_shares.append(None)
+            ratio_list.append(None)
 
         # 機関空売り合計
         inst_shares.append(model.total_short_by_date.get(d))
@@ -101,7 +113,7 @@ def render_combined_chart(model: SupplyDemandModel, show_price_line: bool = True
             )
         )
 
-    # 5. 株価ライン（右軸）
+    # 5. 株価ライン（右軸 y2）
     if show_price_line and any(p is not None for p in price_list):
         fig.add_trace(
             go.Scatter(
@@ -116,11 +128,28 @@ def render_combined_chart(model: SupplyDemandModel, show_price_line: bool = True
             )
         )
 
+    # 6. 信用倍率ライン
+    # 株価表示時は yaxis3（右側2列目または独立軸）、株価非表示時は yaxis2 を使用
+    target_ratio_yaxis = 'y3' if show_price_line else 'y2'
+    if show_margin_ratio and any(r is not None for r in ratio_list):
+        fig.add_trace(
+            go.Scatter(
+                x=graph_dates,
+                y=ratio_list,
+                mode='lines+markers',
+                name='信用倍率',
+                line=dict(color='#8e24aa', width=2, dash='dash'),
+                marker=dict(size=5, color='#8e24aa'),
+                hovertemplate='信用倍率: %{y:.2f}倍<extra></extra>',
+                yaxis=target_ratio_yaxis
+            )
+        )
+
     layout_args = dict(
         title=f"{title_label} 信用残・機関空売り・出来高推移",
         dragmode=False,
         hovermode="x unified",
-        margin=dict(l=40, r=50 if show_price_line else 40, t=50, b=30),
+        margin=dict(l=40, r=80 if (show_price_line and show_margin_ratio) else (50 if (show_price_line or show_margin_ratio) else 40), t=50, b=30),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         template="plotly_white",
         bargap=0.35,
@@ -136,6 +165,25 @@ def render_combined_chart(model: SupplyDemandModel, show_price_line: bool = True
             fixedrange=True,
             showgrid=False
         )
+
+    if show_margin_ratio:
+        if show_price_line:
+            layout_args["yaxis3"] = dict(
+                title_text="信用倍率（倍）",
+                overlaying="y",
+                side="right",
+                position=0.96,
+                fixedrange=True,
+                showgrid=False
+            )
+        else:
+            layout_args["yaxis2"] = dict(
+                title_text="信用倍率（倍）",
+                overlaying="y",
+                side="right",
+                fixedrange=True,
+                showgrid=False
+            )
 
     fig.update_layout(**layout_args)
     return fig
