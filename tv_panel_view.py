@@ -7,6 +7,7 @@ from table_view import render_main_table_html
 def render_tv_panel(clean_target: str, prepare_data_func):
     """
     アプローチ2：TradingView 下部パネル専用のコンパクト描画モジュール
+    （初期高さ360pxのパネル内にスクロールなしでグラフ全体が収まるよう最適化）
     """
     st.markdown("""
         <style>
@@ -14,10 +15,18 @@ def render_tv_panel(clean_target: str, prepare_data_func):
                 display: none !important;
             }
             .block-container {
-                padding-top: 0.4rem !important;
-                padding-bottom: 0.4rem !important;
-                padding-left: 0.8rem !important;
-                padding-right: 0.8rem !important;
+                padding-top: 0.15rem !important;
+                padding-bottom: 0rem !important;
+                padding-left: 0.6rem !important;
+                padding-right: 0.6rem !important;
+            }
+            /* コントロールバーとグラフの間の余白を詰める */
+            [data-testid="stVerticalBlock"] {
+                gap: 0.2rem !important;
+            }
+            /* セレクトボックス・チェックボックス周りの余白を最小化 */
+            .stSelectbox, .stCheckbox {
+                margin-bottom: 0 !important;
             }
         </style>
     """, unsafe_allow_html=True)
@@ -47,7 +56,13 @@ def render_tv_panel(clean_target: str, prepare_data_func):
         show_price_line=show_price,
         show_margin_ratio=show_ratio
     )
-    fig.update_layout(height=300, margin=dict(l=35, r=45, t=35, b=25))
+    # パネル内にスクロールなしで収まるよう高さ・余白・タイトル位置を最適化
+    fig.update_layout(
+        height=225,
+        margin=dict(l=35, r=45, t=28, b=18),
+        title=dict(font=dict(size=13), y=0.97),
+        xaxis=dict(title_text="")
+    )
     st.plotly_chart(
         fig,
         use_container_width=True,
