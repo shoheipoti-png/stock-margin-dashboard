@@ -58,7 +58,7 @@ def render_tv_panel(clean_target: str, prepare_data_func):
     )
     # パネル内にスクロールなしで収まるよう高さ・余白・タイトル位置を最適化
     fig.update_layout(
-        height=225,
+        height=260,
         margin=dict(l=35, r=45, t=28, b=18),
         title=dict(font=dict(size=13), y=0.97),
         xaxis=dict(title_text="")
