@@ -123,6 +123,7 @@ def fetch_yahoo_complete_data(ticker_code):
     future_d_obj = None
     fiscal_month = 3
     today_date = datetime.date.today()
+    page_text = ""
 
     try:
         res = requests.get(url_quote, headers=headers, timeout=6)
