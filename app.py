@@ -7,6 +7,7 @@ import data_loader
 from analytics import build_supply_demand_model
 from chart_view import render_combined_chart
 from table_view import render_institution_summary_html, render_main_table_html
+from tv_panel_view import render_tv_panel
 from watchlist_manager import (
     init_watchlist_state,
     is_favorite,
@@ -19,11 +20,78 @@ load_data_from_sheet = getattr(data_loader, "load_data_from_sheet")
 get_stock_prices = getattr(data_loader, "get_stock_prices")
 fetch_yahoo_complete_data = getattr(data_loader, "fetch_yahoo_complete_data")
 
-# TradingView チャートレイアウトID
+# TradingView チャートレイアウトID（アプローチ1用）
 TV_LAYOUT_ID = "KbHcvZlX"
+DAYS_MAP = {"直近1ヶ月": 30, "直近3ヶ月": 90, "直半年": 180, "1年": 365}
 
-st.set_page_config(page_title="株価・信用残・機関空売りダッシュボード", layout="wide")
 
+def prepare_supply_demand_data(clean_target: str, period_option: str):
+    """
+    通常画面・TVパネル共通のデータ取得・最新株価補完・需給モデル構築
+    """
+    selected_days = DAYS_MAP.get(period_option, 30)
+    cutoff_str = (datetime.date.today() - datetime.timedelta(days=selected_days)).strftime("%Y-%m-%d")
+
+    stock_data = fetch_yahoo_complete_data(clean_target)
+
+    # 銘柄名の多層フォールバック解決（スクレイピング -> ウォッチリスト保存名 -> コード）
+    company_name = stock_data.get("company_name", "").strip()
+    if not company_name:
+        for item in st.session_state.get("watchlist", []):
+            if clean_ticker_code(item.get("code", "")) == clean_target:
+                company_name = item.get("name", "").strip()
+                break
+
+    df_margin = load_data_from_sheet("margin")
+    df_short = load_data_from_sheet("short")
+    stock_prices = get_stock_prices(clean_target)
+
+    # 深夜・未確定日足の終値・前日比自動補完処理
+    if stock_prices and stock_data.get("price"):
+        latest_p_date = max(stock_prices.keys())
+        try:
+            y_price_val = float(str(stock_data["price"]).replace(",", ""))
+            if stock_prices[latest_p_date].get("close") is None:
+                stock_prices[latest_p_date]["close"] = y_price_val
+
+            if stock_prices[latest_p_date].get("pct", 0.0) == 0.0 and stock_data.get("change_pct"):
+                m_p = re.search(r'([+-]?[0-9.]+)', str(stock_data["change_pct"]))
+                if m_p:
+                    stock_prices[latest_p_date]["pct"] = float(m_p.group(1))
+        except Exception:
+            pass
+
+    model = build_supply_demand_model(
+        ticker=clean_target,
+        company_name=company_name,
+        df_margin=df_margin,
+        df_short=df_short,
+        stock_prices=stock_prices,
+        cutoff_str=cutoff_str,
+        clean_ticker_func=clean_ticker_code
+    )
+    return stock_data, company_name, model
+
+
+# クエリパラメータ判定
+query_mode = st.query_params.get("mode", "")
+query_ticker = st.query_params.get("ticker", "")
+is_tv_panel = (query_mode == "tv_panel")
+
+st.set_page_config(
+    page_title="株価・信用残・機関空売りダッシュボード",
+    layout="wide",
+    initial_sidebar_state="collapsed" if is_tv_panel else "expanded"
+)
+
+# アプローチ2：TV下部パネルモードの場合は専用モジュールへ委譲して終了
+if is_tv_panel:
+    render_tv_panel(clean_ticker_code(query_ticker), prepare_supply_demand_data)
+    st.stop()
+
+# ==============================================================================
+# 通常ダッシュボードモード
+# ==============================================================================
 init_watchlist_state()
 
 if "active_view" not in st.session_state:
@@ -50,23 +118,12 @@ if ticker != st.session_state.current_ticker:
 if ticker:
     clean_target = clean_ticker_code(ticker)
 
-    # 1回のリクエストで全Yahooデータを取得
-    stock_data = fetch_yahoo_complete_data(clean_target)
-
-    # 銘柄名の多層フォールバック解決（スクレイピング -> ウォッチリスト保存名 -> コード）
-    company_name = stock_data.get("company_name", "").strip()
-    if not company_name:
-        for item in st.session_state.get("watchlist", []):
-            if clean_ticker_code(item.get("code", "")) == clean_target:
-                company_name = item.get("name", "").strip()
-                break
-
-    title_label = f"{clean_target}（{company_name}）" if company_name else clean_target
-    fav_status = is_favorite(clean_target)
-    btn_label = "★ 削除" if fav_status else "★ 追加"
-
     # A. 詳細ビュー
     if st.session_state.active_view == "detail":
+        stock_data = fetch_yahoo_complete_data(clean_target)
+        company_name = stock_data.get("company_name", "").strip()
+        title_label = f"{clean_target}（{company_name}）" if company_name else clean_target
+
         col_back, col_d_title = st.columns([0.15, 0.85])
         with col_back:
             if st.button("⬅ 需給画面へ戻る", use_container_width=True):
@@ -80,35 +137,16 @@ if ticker:
     else:
         period_option = st.selectbox(
             "表示期間を選択：",
-            ["直近1ヶ月", "直近3ヶ月", "直半年", "1年"],
+            list(DAYS_MAP.keys()),
             index=0
         )
-        days_map = {"直近1ヶ月": 30, "直近3ヶ月": 90, "直半年": 180, "1年": 365}
-        selected_days = days_map[period_option]
 
-        cutoff_date = datetime.date.today() - datetime.timedelta(days=selected_days)
-        cutoff_str = cutoff_date.strftime("%Y-%m-%d")
+        # 共通関数でデータ取得・補完・モデル構築
+        stock_data, company_name, model = prepare_supply_demand_data(clean_target, period_option)
 
-        # 生データ取得
-        df_margin = load_data_from_sheet("margin")
-        df_short = load_data_from_sheet("short")
-        stock_prices = get_stock_prices(clean_target)
-
-        # ★ 深夜・未確定日足の終値・前日比自動補完処理（Yahooリアルタイム値で埋める）
-        if stock_prices and stock_data.get("price"):
-            latest_p_date = max(stock_prices.keys())
-            try:
-                y_price_val = float(str(stock_data["price"]).replace(",", ""))
-                if stock_prices[latest_p_date].get("close") is None:
-                    stock_prices[latest_p_date]["close"] = y_price_val
-                
-                # 騰落率の補完（0.0%のまま抜けている場合）
-                if stock_prices[latest_p_date].get("pct", 0.0) == 0.0 and stock_data.get("change_pct"):
-                    m_p = re.search(r'([+-]?[0-9.]+)', str(stock_data["change_pct"]))
-                    if m_p:
-                        stock_prices[latest_p_date]["pct"] = float(m_p.group(1))
-            except Exception:
-                pass
+        title_label = model.title_label
+        fav_status = is_favorite(clean_target)
+        btn_label = "★ 削除" if fav_status else "★ 追加"
 
         # ヘッダー操作ボタン
         col_title, col_fav, col_detail, _ = st.columns([0.45, 0.12, 0.18, 0.25])
@@ -139,7 +177,7 @@ if ticker:
             <div><span style="color: #666;">実績PBR:</span> <b>{stock_data.get('pbr', '-')}</b></div>
             <div><span style="color: #666;">配当利回り:</span> <b>{stock_data.get('dividend_yield', '-')}</b></div>
             <div>
-                <span style="color: #666;">決算予定:</span> 
+                <span style="color: #666;">決算予定:</span>
                 <span style="background-color: {s_bg}; color: {s_col}; padding: 2px 8px; border-radius: 4px; font-weight: bold; display: inline-block;">
                     {s_date}
                 </span>
@@ -160,17 +198,6 @@ if ticker:
         with q_col2:
             st.metric(label="夜間PTS株価 / 東証終値比", value=pts_price, delta=pts_delta)
 
-        # 需給データモデル構築
-        model = build_supply_demand_model(
-            ticker=clean_target,
-            company_name=company_name,
-            df_margin=df_margin,
-            df_short=df_short,
-            stock_prices=stock_prices,
-            cutoff_str=cutoff_str,
-            clean_ticker_func=clean_ticker_code
-        )
-
         # グラフ描画（株価・信用倍率・TradingViewチェックボックス横並び）
         c_check1, c_check2, c_check3, _ = st.columns([0.24, 0.22, 0.28, 0.26])
         with c_check1:
@@ -186,8 +213,8 @@ if ticker:
             components.iframe(tv_url, height=650, scrolling=False)
 
         fig = render_combined_chart(
-            model=model, 
-            show_price_line=show_price, 
+            model=model,
+            show_price_line=show_price,
             show_margin_ratio=show_ratio
         )
         st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': False, 'displayModeBar': False, 'doubleClick': False})
