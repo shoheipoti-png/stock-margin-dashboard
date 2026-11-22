@@ -19,6 +19,9 @@ load_data_from_sheet = getattr(data_loader, "load_data_from_sheet")
 get_stock_prices = getattr(data_loader, "get_stock_prices")
 fetch_yahoo_complete_data = getattr(data_loader, "fetch_yahoo_complete_data")
 
+# TradingView チャートレイアウトID
+TV_LAYOUT_ID = "KbHcvZlX"
+
 st.set_page_config(page_title="株価・信用残・機関空売りダッシュボード", layout="wide")
 
 init_watchlist_state()
@@ -168,12 +171,19 @@ if ticker:
             clean_ticker_func=clean_ticker_code
         )
 
-        # グラフ描画（株価・信用倍率チェックボックス横並び）
-        c_check1, c_check2, _ = st.columns([0.28, 0.28, 0.44])
+        # グラフ描画（株価・信用倍率・TradingViewチェックボックス横並び）
+        c_check1, c_check2, c_check3, _ = st.columns([0.24, 0.22, 0.28, 0.26])
         with c_check1:
             show_price = st.checkbox("📈 株価推移（右軸）を表示", value=True)
         with c_check2:
             show_ratio = st.checkbox("⚖️ 信用倍率を表示", value=False)
+        with c_check3:
+            show_tv = st.checkbox("📊 TradingViewを表示 (PC用)", value=False)
+
+        # TradingView 埋め込みエリア（オンの時のみ描画）
+        if show_tv:
+            tv_url = f"https://jp.tradingview.com/chart/{TV_LAYOUT_ID}/?symbol=TSE:{clean_target}"
+            components.iframe(tv_url, height=650, scrolling=False)
 
         fig = render_combined_chart(
             model=model, 
